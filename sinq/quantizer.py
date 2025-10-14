@@ -198,6 +198,7 @@ class Quantizer:
             )
         else:
             W_q = (W * scale + zero).round_().clamp_(min_max[0], min_max[1])
+            scale2, awq_scale = None, None
 
         if 'quantAux' in method:
             scale = rtn8(scale)
