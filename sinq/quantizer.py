@@ -316,7 +316,7 @@ class Quantizer:
         # 4) Uniform / other paths (unchanged, but robust s2 handling)
         if len(s.shape) == 2:
             s2_eff = 1 if s2 is None else s2
-            W_r = W_r[: s.shape[0]]
+            W_r = W_r[: s.shape[1 - meta["axis"]]]
             W_r = ((W_r - z) / s).reshape(meta["shape"]) / s2_eff
 
         elif len(s.shape) == 3:
