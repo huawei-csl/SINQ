@@ -32,9 +32,13 @@ class SINQLinear(nn.Module):
     ):
         super().__init__()
         
-        qc = quant_config['weight_quant_params']
+        # Handle case where quant_config is None (loading pre-quantized weights)
+        if quant_config is None:
+            qc = None
+        else:
+            qc = quant_config['weight_quant_params']
 
-        if ('nogemlite' not in qc['method'].lower()) and qc['nbits'] == 4 and qc['tiling_mode'] == '1D' and has_gemlite:
+        if qc is not None and ('nogemlite' not in qc['method'].lower()) and qc['nbits'] == 4 and qc['tiling_mode'] == '1D' and has_gemlite:
             self.use_gemlite = True
         else:
             self.use_gemlite = False
@@ -381,3 +385,4 @@ def sinq_base_quant_config(
 
 # Alias: follow similar Auto-GPTQ naming
 BaseQuantizeConfig = sinq_base_quant_config
+

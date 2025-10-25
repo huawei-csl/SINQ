@@ -183,7 +183,7 @@ class Quantizer:
             zero = torch.round(zero)
 
         # Use SINQ on weights
-        W_q, scale, zero, scale2, awq_scale = Quantizer.optimize_weights(
+        opt_result = Quantizer.optimize_weights(
             tensor=W,
             layer_activations=layer_activations,
             scale=scale,
@@ -195,6 +195,14 @@ class Quantizer:
             tiling_mode=tiling_mode,
             method=method
         )
+
+        # Check if optimization returned None (meaning quantization should be skipped)
+        if opt_result is None:
+            # Return a signal that this layer should not be quantized
+            # This will be handled by the quantize_model function
+            raise ValueError(f"QUANT_SKIP_LAYERS: Layer has incompatible dimensions for quantization with tiling_mode={tiling_mode}")
+
+        W_q, scale, zero, scale2, awq_scale = opt_result
 
         if 'quantAux' in method:
             scale = rtn8(scale)
