@@ -10,3 +10,5 @@ torchaudio==2.8.0
 torchvision==0.23.0
 lm_eval==0.4.8
 safetensors==0.6.2
+termcolor
+gemlite==0.5.1.post1
