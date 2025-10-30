@@ -22,7 +22,7 @@
 ---
 
 🆕 [30/10/2025] **Fast inference with gemlite:**
-> **Now 4-bit SINQ models benefit from faster inference thanks to gemLite! It requires `pip install gemlite==0.5.1.post1` ! See some more details [here](#4-run-pre-quantized-sinq-models-from-hugging-face)**
+> **Now 4-bit SINQ models benefit from faster inference thanks to gemlite!** It requires `pip install gemlite==0.5.1.post1` See some more details [here](#4-run-pre-quantized-sinq-models-from-hugging-face)!
 
 >  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference (sorry for the joke).  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
