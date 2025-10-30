@@ -21,9 +21,10 @@
 
 ---
 
-🆕 [17/10/2025] **First models on 🤗 Hugging Face Hub:**
-> We’ve started uploading our first pre-quantized models to the 🤗 [**Hugging Face Hub**](https://huggingface.co/huawei-csl) and will continue adding more soon.
->  **Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference** (sorry for the joke).  
+🆕 [30/10/2025] **Fast inference with gemlite:**
+> **Now 4-bit SINQ models benefit from faster inference thanks to gemLite! See more details [here](#3-quantize-any-llm-with-sinq):**
+
+>  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference (sorry for the joke).  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
 ---
 
@@ -36,10 +37,11 @@
 - [1. How does SINQ work?](#1-how-does-sinq-work)
 - [2. Why should I use SINQ?](#2-why-should-i-use-sinq)
 - <u>[3. Quantize (and save) any LLM with SINQ](#3-quantize-any-llm-with-sinq)</u>
-- [4. How to reproduce paper results](#4-how-to-reproduce-paper-results)
-- [5. Ongoing updates on new features and integrations](#5-ongoing-updates-on-new-features-and-integrations)
-- [6. How to Cite This Work](#6-how-to-cite-this-work)
-- [7. Related Repositories](#7-related-repositories)
+- [4. Run pre-quantized SINQ models from Hugging Face](#4-run-pre-quantized-sinq-models-from-hugging-face)
+- [5. How to reproduce paper results](#5-how-to-reproduce-paper-results)
+- [6. Ongoing updates on new features and integrations](#6-ongoing-updates-on-new-features-and-integrations)
+- [7. How to Cite This Work](#7-how-to-cite-this-work)
+- [8. Related Repositories](#8-related-repositories)
 
 #### 📊 Feature Comparison: SINQ vs HQQ _(calibration-free)_ and A-SINQ vs AWQ _(calibrated)_
 
@@ -136,6 +138,7 @@ from sinq.patch_model import AutoSINQHFModel
 from sinq.sinqlinear import BaseQuantizeConfig
 
 model_name = "Qwen/Qwen3-1.7B"
+device = "cuda:0"
 model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -151,7 +154,7 @@ qmodel = AutoSINQHFModel.quantize_model(
     tokenizer=tokenizer,
     quant_config=quant_cfg,
     compute_dtype=torch.bfloat16,
-    device="cuda:0"
+    device=device
 )
 ```
 
@@ -204,15 +207,16 @@ from sinq.patch_model import AutoSINQHFModel
 import torch
 
 tokenizer = AutoTokenizer.from_pretrained(save_dir)
+device = "cuda:0"
 qmodel = AutoSINQHFModel.from_quantized_safetensors(
     save_dir,
-    device="cuda:0",
+    device=device,
     compute_dtype=torch.bfloat16,
 )
 
 # (optional) quick smoke test
 prompt = "Explain neural network quantization in one sentence."
-inputs = tokenizer(prompt, return_tensors="pt").to("cuda:0")
+inputs = tokenizer(prompt, return_tensors="pt").to(device)
 with torch.inference_mode():
     out_ids = qmodel.generate(**inputs, max_new_tokens=32, do_sample=False)
 print(tokenizer.decode(out_ids[0], skip_special_tokens=True))
@@ -237,7 +241,7 @@ import torch
 tokenizer = AutoTokenizer.from_pretrained(save_dir)
 qmodel = AutoSINQHFModel.from_quantized(
     save_dir,
-    device="cuda:0",
+    device=device,
     compute_dtype=torch.bfloat16,
 )
 ```
@@ -253,17 +257,70 @@ from lm_eval import evaluator
 from lm_eval.models.huggingface import HFLM
 
 # Wrap the already quantized model and tokenizer with HFLM
-lm = HFLM(pretrained=qmodel, tokenizer=tokenizer, device="cuda:0")
+lm = HFLM(pretrained=qmodel, tokenizer=tokenizer, device=device)
 
 # Evaluate (many tasks available on lm-eval such as MMLU and HellaSwag)
 results = evaluator.simple_evaluate(
     model=lm,
     tasks=["lambada_openai"],  # small and fast benchmark
-    device="cuda:0"
+    device=device
 )
 ```
 
-## 4. How to reproduce paper results
+## 4. Run pre-quantized SINQ models from Hugging Face
+
+We’re publishing a growing **collection of pre-quantized SINQ models** on 🤗 Hugging Face: **[huawei-csl / SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)**
+
+### Load from the Hub
+
+```python
+import torch
+from transformers import AutoTokenizer
+from sinq.patch_model import AutoSINQHFModel
+
+model_name = "huawei-csl/<model_name>"  # pick a model from the collection
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+device = "cuda:0"
+
+qmodel = AutoSINQHFModel.from_quantized_safetensors(
+    model_name,
+    device=device,
+    compute_dtype=torch.bfloat16,
+)
+```
+
+### (Optional) Extra speed
+
+For additional speed, do a quick warm-up and JIT-compile the forward:
+
+```python
+# Warm-up to build shapes
+_ = qmodel.forward(torch.tensor([[0]], device=device))
+
+# Compile the forward pass (PyTorch 2.x)
+qmodel.forward = torch.compile(
+    qmodel.forward,
+    dynamic=True,
+    fullgraph=False,
+    backend="inductor",
+    mode="reduce-overhead",
+)
+```
+
+### Quick smoke test
+
+```python
+prompt = "Explain neural network quantization in one sentence."
+inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+with torch.inference_mode():
+    out_ids = qmodel.generate(**inputs, max_new_tokens=32, do_sample=False)
+
+print(tokenizer.decode(out_ids[0], skip_special_tokens=True))
+```
+> ⏱️ The **first run will be slower** due to kernel/graph compilation. Subsequent runs are **much faster**!
+
+## 5. How to reproduce paper results
 <details>
 <summary>Click to expand the commands to reproduce the paper results</summary>
 
@@ -344,7 +401,7 @@ Customize experiments with the following command-line arguments:
 > 📝 **Note:** All results reported in the paper were obtained using the evaluation framework from [Efficient-ML/Qwen3-Quantization](https://github.com/Efficient-ML/Qwen3-Quantization) rather than `lm-eval`. 
 </details>
 
-## 5. Ongoing updates on new features and integrations
+## 6. Ongoing updates on new features and integrations
 
 We are actively expanding SINQ with new features and integrations. Stay tuned here for the latest updates:
 
@@ -358,7 +415,7 @@ We are actively expanding SINQ with new features and integrations. Stay tuned he
 - 🔜 **Work in progress** - Support for **mixed-precision quantization** (combine multiple bitwidths for optimal accuracy-efficiency balance)  
 - 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code>.
 
-## 6. How to Cite This Work
+## 7. How to Cite This Work
 
 If you find **SINQ** useful in your research or applications, please cite our <a href="http://arxiv.org/abs/2509.22944" target="_blank"><strong>paper</strong></a>:
 
@@ -375,7 +432,7 @@ If you find **SINQ** useful in your research or applications, please cite our <a
 ```
 
 
-## 7. Related Repositories
+## 8. Related Repositories
 
 This project builds upon and extends the excellent work from the following open-source projects:
 
