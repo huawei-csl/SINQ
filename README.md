@@ -222,7 +222,7 @@ qmodel = AutoSINQHFModel.from_quantized_safetensors(
 
 ### (Optional) Speed up inference
 
-You can optionally compile the model’s forward pass using **Torch 2.x** `torch.compile`, which can provide a **significant speed boost** (especially after the first run):
+You can optionally compile the model’s forward pass using `torch.compile`, which can provide a **significant speed boost** (especially after the first run):
 
 ```python
 # Warm up to initialize CUDA graphs
@@ -315,7 +315,7 @@ For additional speed (in addition to the one given by gemlite), do a quick warm-
 # Warm-up to build shapes
 _ = qmodel.forward(torch.tensor([[0]], device=device))
 
-# Compile the forward pass (PyTorch 2.x)
+# Compile the forward pass
 qmodel.forward = torch.compile(
     qmodel.forward,
     dynamic=True,
