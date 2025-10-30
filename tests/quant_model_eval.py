@@ -90,7 +90,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     model, tokenizer, memory = get_model(args.model_name, nbits=args.nbits, group_size=args.group_size, 
                                          axis=args.axis, device=args.device, tiling_mode=args.tiling_mode,
-                                         method=args.method)
+                                         method= args.method+"_nogemlite")
 
     model = torch.compile(model)
     print(f'alloc memory (GB): {memory:.2f}')

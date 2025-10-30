@@ -18,14 +18,15 @@ try:
     _HAVE_GEMLITE = True
     print('Found gemlite installation, fast SINQ-ference for 4-bit models')
 except Exception:
+    print('No gemlite installation, slow inference! Check the SINQ repo for more info!')
     _HAVE_GEMLITE = False
 
 
 class SINQLinear(nn.Module):
     """
     Linear that can run either:
-      • PyTorch (dequantize + matmul), or
-      • GemLite backend via gemlite.core.forward_functional (no persistent GemLite module)
+      - PyTorch (dequantize + matmul), or
+      - GemLite backend via gemlite.core.forward_functional (no persistent GemLite module)
 
     We auto-enable GemLite for 4-bit, 1D tiling, unless 'nogemlite'
     appears in the quant method string.
@@ -198,10 +199,17 @@ class SINQLinear(nn.Module):
         self._gemlite_ready  = True
 
         # Free temps ASAP
-        del gl
-        if W_for_gl is not self.W_q:
-            del W_for_gl
+        self._offload_originals_post_pack()
 
+    def _offload_originals_post_pack(self):
+        # Offload quantized weights and meta to CPU; runtime only needs GemLite buffers.
+        if self.W_q is not None and self.W_q.is_cuda:
+            self.W_q = self.W_q.cpu()
+        if isinstance(self.meta, dict):
+            for k, v in list(self.meta.items()):
+                if isinstance(v, torch.Tensor) and v.is_cuda:
+                    self.meta[k] = v.cpu()
+        torch.cuda.empty_cache()
 
     # ---------- Forwards ----------
     def forward_gemlite(self, x: torch.Tensor) -> torch.Tensor:
