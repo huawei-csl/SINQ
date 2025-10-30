@@ -22,7 +22,7 @@
 ---
 
 🆕 [30/10/2025] **Fast inference with gemlite:**
-> **Now 4-bit SINQ models benefit from faster inference thanks to gemLite! See more details [here](#3-quantize-any-llm-with-sinq):**
+> **Now 4-bit SINQ models benefit from faster inference thanks to gemLite! It requires `pip install gemlite==0.5.1.post1` ! See some more details [here](#4-run-pre-quantized-sinq-models-from-hugging-face)**
 
 >  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference (sorry for the joke).  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
@@ -181,7 +181,7 @@ Here’s a summary of the main arguments you can tune:
 
 If you want to reuse a quantized model later, save it to disk in **HF-style sharded safetensors** and reload without needing base FP weights.
 
-> Requires: `pip install safetensors`
+> Requires: `pip install safetensors` and `pip install gemlite==0.5.1.post1`
 
 ```python
 # --- Save to a folder (sharded safetensors) ---
@@ -214,13 +214,32 @@ qmodel = AutoSINQHFModel.from_quantized_safetensors(
     compute_dtype=torch.bfloat16,
 )
 
-# (optional) quick smoke test
-prompt = "Explain neural network quantization in one sentence."
-inputs = tokenizer(prompt, return_tensors="pt").to(device)
-with torch.inference_mode():
-    out_ids = qmodel.generate(**inputs, max_new_tokens=32, do_sample=False)
-print(tokenizer.decode(out_ids[0], skip_special_tokens=True))
 ```
+
+✅ Your model is now loaded and ready for inference!
+
+---
+
+### (Optional) Speed up inference
+
+You can optionally compile the model’s forward pass using **Torch 2.x** `torch.compile`, which can provide a **significant speed boost** (especially after the first run):
+
+```python
+# Warm up to initialize CUDA graphs
+_ = qmodel.forward(torch.tensor([[0]], device=device))
+
+# Compile for faster inference
+qmodel.forward = torch.compile(
+    qmodel.forward,
+    dynamic=True,
+    fullgraph=False,
+    backend="inductor",
+    mode="reduce-overhead",
+)
+```
+
+> ⏱️ The **first run** will take longer because PyTorch compiles optimized kernels,  
+> but subsequent runs will be **much faster**.
 
 <details>
 <summary><strong>Alternative: save & reload as a single <code>.pt</code> file</strong> </summary>
@@ -269,7 +288,7 @@ results = evaluator.simple_evaluate(
 
 ## 4. Run pre-quantized SINQ models from Hugging Face
 
-We’re publishing a growing **collection of pre-quantized SINQ models** on 🤗 Hugging Face: **[huawei-csl / SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)**
+We’re publishing a growing **collection of pre-quantized SINQ models** on 🤗 Hugging Face: **[huawei-csl / SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)** !
 
 ### Load from the Hub
 
@@ -291,7 +310,7 @@ qmodel = AutoSINQHFModel.from_quantized_safetensors(
 
 ### (Optional) Extra speed
 
-For additional speed, do a quick warm-up and JIT-compile the forward:
+For additional speed (in addition to the one given by gemlite), do a quick warm-up and JIT-compile the forward:
 
 ```python
 # Warm-up to build shapes
