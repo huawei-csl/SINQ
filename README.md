@@ -238,8 +238,7 @@ qmodel.forward = torch.compile(
 )
 ```
 
-> ⏱️ The **first run** will take longer because PyTorch compiles optimized kernels,  
-> but subsequent runs will be **much faster**.
+> ⏱️ The **first run** will take longer because PyTorch compiles optimized kernels, but subsequent runs will be **much faster**.
 
 <details>
 <summary><strong>Alternative: save & reload as a single <code>.pt</code> file</strong> </summary>
