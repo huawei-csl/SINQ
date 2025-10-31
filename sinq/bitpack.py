@@ -36,7 +36,7 @@ class BitPack:
         # Extract 4-bit groups using modular arithmetic
         for i in range(2):
             divisor = 16 if i == 0 else 1
-            tmp[i * _step : (i + 1) * _step] = (W_q // divisor) % 16
+            tmp[i * _step : (i + 1) * _step] = ((W_q.to(torch.float16) // divisor) % 16).to(torch.uint8)
 
         return tmp
 
@@ -223,3 +223,79 @@ class BitPack:
         tmp[7 * _step : 8 * _step] = W_q & 0b00000001
 
         return tmp
+
+    @staticmethod
+
+    def pack_4bit_32_signed(W_s4: torch.Tensor) -> torch.Tensor:
+
+        """
+
+        Pack signed int4 weights (K, N) -> (K//8, N) INT32.
+
+        Each int32 carries 8 consecutive 4-bit values along K.
+
+        W_s4 must be int32 in [-8, 7]. We store two's complement nibbles (val & 0xF).
+
+        """
+
+        assert W_s4.dtype in (torch.int32, torch.int16, torch.int8), "expect integer tensor"
+
+        K, N = W_s4.shape
+
+        assert K % 8 == 0, "K must be a multiple of 8 for int4 packing"
+
+        W = W_s4.to(torch.int32).view(K // 8, 8, N)  # (K//8, 8, N)
+
+
+
+        def nib(i):  # two's complement nibble
+
+            return (W[:, i, :] & 0xF).to(torch.int32)
+
+
+
+        packed = (nib(0)
+
+                  | (nib(1) << 4)
+
+                  | (nib(2) << 8)
+
+                  | (nib(3) << 12)
+
+                  | (nib(4) << 16)
+
+                  | (nib(5) << 20)
+
+                  | (nib(6) << 24)
+
+                  | (nib(7) << 28))
+
+        return packed.contiguous()
+
+
+
+    @staticmethod
+
+    def unpack_4bit_32_signed(W_packed: torch.Tensor) -> torch.Tensor:
+
+        """
+
+        Reverse of pack_4bit_32_signed.
+
+        (K//8, N) INT32 -> (K, N) INT32 with values in [-8, 7].
+
+        """
+
+        M, N = W_packed.shape
+
+        out = torch.empty((M * 8, N), dtype=torch.int32, device=W_packed.device)
+
+        for i in range(8):
+
+            nib = (W_packed >> (4 * i)) & 0xF   # 0..15
+
+            # convert back to signed in [-8,7]
+
+            out[i::8] = nib.where(nib < 8, nib - 16)
+
+        return out
