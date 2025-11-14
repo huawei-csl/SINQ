@@ -21,10 +21,10 @@
 
 ---
 
-🆕 [30/10/2025] **Fast inference with gemlite:**
-> **Now 4-bit SINQ models benefit from faster inference thanks to gemlite!** It requires `pip install gemlite==0.5.1.post1` See some more details [here](#4-run-pre-quantized-sinq-models-from-hugging-face)!
+🆕 [14/11/2025] **PR to integrate SINQ into HF transformers! 🤗**
+> **Issue + PR have been opened to integrate SINQ into HF transformers. You can follow the discussion [here](https://github.com/huggingface/transformers/issues/42116)!
 
->  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference (sorry for the joke).  
+>  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference.  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
 ---
 
