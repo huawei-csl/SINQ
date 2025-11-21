@@ -59,16 +59,25 @@ class SINQLinear(nn.Module):
 
         # Decide backend (GemLite vs PyTorch)
         qc = (self.quant_config or {}).get('weight_quant_params', {})
-        if (
+        can_use_gemlite = (
             qc.get('nbits', None) == 4
             and qc.get('tiling_mode', None) == '1D'
             and 'nogemlite' not in str(qc.get('method', '')).lower()
             and self.device.type == "cuda"
             and _HAVE_GEMLITE
-        ):
+        )
+
+        if can_use_gemlite and (self.linear_layer is not None):
+            out_f = getattr(self.linear_layer, "out_features", None)
+            in_f = getattr(self.linear_layer, "in_features", None)
+            if out_f is None or in_f is None or out_f < 16 or in_f < 16:
+                can_use_gemlite = False
+        
+        if can_use_gemlite:
             self.use_gemlite = True
             self.set_forward_backend("gemlite")
         else:
+            #print(f'The linear layer im considering in pytorch is: {self.linear_layer}', flush=True)
             self.use_gemlite = False
             self.set_forward_backend("pytorch")
 
@@ -215,6 +224,7 @@ class SINQLinear(nn.Module):
     def forward_gemlite(self, x: torch.Tensor) -> torch.Tensor:
         runtime_dev = x.device
         runtime_dtype = x.dtype
+
         if runtime_dev.type != "cuda":
             raise RuntimeError(f"GemLite backend requires CUDA tensors; got input on device: {runtime_dev}")
 
@@ -223,16 +233,19 @@ class SINQLinear(nn.Module):
             or any(t.device != runtime_dev for t in (self._gl_tensor_args or []))
             or (getattr(self, "_gl_scale2", None) is not None and self._gl_scale2.device != runtime_dev)
             or (getattr(self, "_gl_bias", None) is not None and self._gl_bias is not None and self._gl_bias.device != runtime_dev)
-            or (getattr(self, "device", None) != runtime_dev)
-            or (getattr(self, "_gl_input_torch_dtype", None) != runtime_dtype)  # <— NEW
+            or (torch.device(getattr(self, "device", None)) != runtime_dev)
+            or (getattr(self, "_gl_input_torch_dtype", None) != runtime_dtype)
         )
         if need_rebuild:
+            print('Rebuilding...')
             self.device = runtime_dev
             self._gemlite_ready = False
             self._prepare_gemlite_args(runtime_dtype)  # <— build for the dtype we *actually* have
-
+        
+        self.device = torch.device(self.device)
         with torch.cuda.device(self.device):
             # self._gl_scale2 already matches x.dtype, so no silent upcast to fp32
+
             return gemlite.forward_functional(
                 self._gl_scale2 * x,
                 self._gl_bias,
@@ -240,22 +253,32 @@ class SINQLinear(nn.Module):
                 self._gl_meta_args,
                 -1,
             )
-
-
+        
     def forward_pytorch(self, x: Tensor) -> Tensor:
         out = torch.matmul(x, self.dequantize().t())
         if self.bias is not None:
             out += self.bias
         return out
 
-    @classmethod
-    def set_forward_backend(cls, backend: str):
+        #dev = x.device
+        #print(f'The device in pytorch forward is: {dev}', flush=True)
+        #print(f'The linear layer im considering is {self}', flush=True)
+        #W = self.dequantize().to(dev)
+        #out = torch.matmul(x, W.t())
+        #if self.bias is not None:
+        #    out += self.bias.to(dev)
+        #return out
+
+    def set_forward_backend(self, backend: str):
         if backend == "pytorch":
-            cls.forward = cls.forward_pytorch
+            self._forward_impl = self.forward_pytorch
         elif backend == "gemlite":
-            cls.forward = cls.forward_gemlite
+            self._forward_impl = self.forward_gemlite
         else:
             raise ValueError(f"Backend {backend} not supported")
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl(x)
 
     # ---------- Utilities ----------
     def unpack(self, reshape=False, dtype=None):
@@ -367,8 +390,15 @@ class SINQLinear(nn.Module):
             return False
         if "scale2" not in m:
             return False
+
+        # shape sanity: GemLite kernels need N, K >= 16
+        if "shape" not in m:
+            return False
+        N, K = map(int, m["shape"])
+        if N < 16 or K < 16:
+            return False
+
         # group_size sanity
-        K = int(m["shape"][1])
         G = int(m.get("group_size", 0) or 0)
         return (G > 0) and (K % G == 0)
 
