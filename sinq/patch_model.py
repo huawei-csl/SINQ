@@ -1,5 +1,4 @@
 # modified by SINQ authors 2025
-
 import os
 import json
 import math
@@ -48,7 +47,6 @@ def _parse_size_to_bytes(x) -> int:
 _QUANT_LAYERS = [nn.Linear, SINQLinear]
 _IGNORE_LINEAR = ["lm_head"]
 
-
 # Finds the parent of a node module named "name"
 def find_parent(model, name: str) -> nn.Module:
     module_tree = name.split(".")[:-1]
@@ -57,11 +55,9 @@ def find_parent(model, name: str) -> nn.Module:
         parent = parent._modules[m]
     return parent
 
-
 # checks if a module is a leaf: doesn't have another module inside
 def is_leaf_module(module) -> bool:
     return len(module._modules) == 0
-
 
 # Get the linear_tag from a modul name. For example: model.layers.31.self_attn.k_proj -> self_attn.k_proj
 def name_to_linear_tag(name: str) -> str:
@@ -73,7 +69,6 @@ def name_to_linear_tag(name: str) -> str:
         ]
     )
 
-
 # returns all children nodes from model
 def get_all_children_from_model(model, ignore: list = []) -> list:
     tags = []
@@ -82,7 +77,6 @@ def get_all_children_from_model(model, ignore: list = []) -> list:
             tags.append(name)
     return tags
 
-
 # Get all linear tags available
 def get_linear_tags_from_model(model, ignore: list) -> list:
     linear_tags = set()
@@ -90,7 +84,6 @@ def get_linear_tags_from_model(model, ignore: list) -> list:
         if (type(module) in _QUANT_LAYERS) and (name.split(".")[-1] not in ignore):
             linear_tags.add(name_to_linear_tag(name))
     return list(linear_tags)
-
 
 def forward_device_hooked(self, *args, **kwargs):
     args = list(args)
@@ -143,6 +136,78 @@ def _detect_tied_leaves(model) -> set[str]:
             pass
     return tied
 
+def _pick_sinq_class(
+    *,
+    model=None,
+    save_dir_or_hub: str | None = None,
+    cache_dir: str | None = None,
+    revision: str | None = None,
+    local_files_only: bool = False,
+    token: str | None = None,
+):
+    """
+    Unified classifier for which SINQ HF wrapper to use.
+
+    Can be called in two ways:
+
+      - For SAVING:
+            _pick_sinq_class(model=my_model)
+
+      - For LOADING:
+            _pick_sinq_class(save_dir_or_hub="repo_or_path", ...)
+
+    Returns one of:
+        QwenSINQHFModel, KimiSINQHFModel, or AutoSINQHFModel
+    """
+    cfg = None
+    model_type = ""
+    archs_lower = ""
+
+    # ---- If we have a live model, use it first ----
+    if model is not None:
+        cfg = getattr(model, "config", None)
+
+        # Strong hint: module names
+        for m in model.modules():
+            cls_name = m.__class__.__name__.lower()
+            if "qwen3nextgateddeltanet" == cls_name or "qwen" in cls_name:
+                return QwenSINQHFModel
+            if "kimi" in cls_name or "moonshot" in cls_name:
+                return KimiSINQHFModel
+
+    # ---- If config not known yet, and we have a repo/path, load config ----
+    if cfg is None and save_dir_or_hub is not None:
+        cfg = transformers.AutoConfig.from_pretrained(
+            save_dir_or_hub,
+            cache_dir=cache_dir,
+            revision=revision,
+            local_files_only=local_files_only,
+            token=token,
+        )
+
+    # If still no config, fall back to generic Auto
+    if cfg is None:
+        return AutoSINQHFModel
+
+    model_type = (getattr(cfg, "model_type", "") or "").lower()
+    archs = getattr(cfg, "architectures", []) or []
+    archs_lower = " ".join(archs).lower()
+
+    # ---- Qwen detection ----
+    if "qwen" in model_type or "qwen" in archs_lower:
+        return QwenSINQHFModel
+
+    # ---- Kimi/Moonshot detection (tweak as needed) ----
+    if (
+        "kimi" in model_type
+        or "kimi" in archs_lower
+        or "moonshot" in model_type
+        or "moonshot" in archs_lower
+    ):
+        return KimiSINQHFModel
+
+    # ---- Default: generic Auto ----
+    return AutoSINQHFModel
 
 # Base patching class. Patching defines how nn.Linear and other layers are replaced via a patching function.
 class BasePatch:
@@ -218,11 +283,16 @@ class BasePatch:
 
     @classmethod
     def get_ignore_layers(cls, model) -> list:
+        """
+        Ignore the root module ("") and all non-leaf container modules.
+        Leaf modules (which actually own tensors) are NOT ignored.
+        """
         layers = {""}
         for name, module in model.named_modules():
             if not is_leaf_module(module):
                 layers.add(name)
         return list(layers)
+
 
     # Autmatically name modules. This is very important to save/load the weights
     @classmethod
@@ -257,7 +327,6 @@ class BasePatch:
         cls.patch_nonlinearlayers(model, patch_nonlinear_fct, verbose=verbose)
         cls.patch_linearlayers(model, patch_linear_fct, patch_params, verbose=verbose)
         cleanup()
-
 
 class BaseSINQModel:
     TIED_LEAVES = {"lm_head"}
@@ -539,7 +608,34 @@ class BaseSINQModel:
             return out_module
 
         def _patch_other(layer):
-            current_device = device_map[layer.name]
+            # Try to look up the device for this module
+            current_device = device_map.get(layer.name, None)
+
+            if current_device is None:
+                # Derive it from the enclosing block (e.g. "model.layers.0")
+                block = None
+                if all_blocks is not None:
+                    for b in all_blocks:
+                        if layer.name.startswith(b):
+                            block = b
+                            break
+
+                if block is not None and block in device_map:
+                    current_device = device_map[block]
+                else:
+                    # Fallback: single-device case or first device from a list/dict
+                    if isinstance(device, str):
+                        current_device = device
+                    elif isinstance(device, list) and len(device) > 0:
+                        current_device = device[0]
+                    elif isinstance(device, dict) and len(device) > 0:
+                        current_device = next(iter(device.values()))
+                    else:
+                        current_device = "cuda"
+
+                # Cache it so future calls see it directly
+                device_map[layer.name] = current_device
+
             layer.device = current_device
             return layer.to(device=current_device, dtype=compute_dtype)
 
@@ -575,11 +671,6 @@ class BaseSINQModel:
     # Prepares model weights by iterating through modules. It might some parameters that are NOT modules like model.param1
     @classmethod
     def serialize_weights(cls, model, verbose: bool = False) -> dict:
-        """
-        Collect per-leaf module weights. For SINQLinear we rely on its custom
-        state_dict() (added in Step 1). For other leaves we use state_dict()
-        and, if empty but tensors exist, fall back to direct capture.
-        """
         weights = {}
         ignore_keys = cls.get_ignore_layers(model)
         actually_tied = _detect_tied_leaves(model)
@@ -587,18 +678,20 @@ class BaseSINQModel:
         def _is_leaf(m: nn.Module) -> bool:
             return len(m._modules) == 0
 
+        # 1) Generic leaf capture
         for name, module in model.named_modules():
             if name in ignore_keys or not _is_leaf(module):
                 continue
-
             if name in actually_tied:
                 continue
+                
             try:
                 state = module.state_dict()
-                # If empty but the module actually owns tensors, capture directly
-                if (len(state) == 0):
-                    has_params_or_bufs = any(True for _ in module.parameters(recurse=False)) or \
-                                        any(b is not None for b in module.buffers(recurse=False))
+                if len(state) == 0:
+                    has_params_or_bufs = (
+                        any(True for _ in module.parameters(recurse=False))
+                        or any(b is not None for b in module.buffers(recurse=False))
+                    )
                     if has_params_or_bufs:
                         direct = {}
                         for k, p in module.named_parameters(recurse=False):
@@ -615,8 +708,23 @@ class BaseSINQModel:
                 if verbose:
                     print(f"[serialize_weights] Skipping {name}: {e}")
 
-        return weights
+        # 2) Let subclasses add model-specific extras
+        if hasattr(cls, "extra_serialize_weights"):
+            cls.extra_serialize_weights(model, weights)
 
+        if verbose:
+            total_bytes = 0
+            total_tensors = 0
+            for sd in weights.values():
+                for v in sd.values():
+                    if isinstance(v, torch.Tensor):
+                        total_tensors += 1
+                        total_bytes += v.numel() * v.element_size()
+            gb = total_bytes / (1024 ** 3)
+            print(f"[serialize_weights] Saved {len(weights)} modules, "
+                  f"{total_tensors} tensors, ~{gb:.2f} GB of tensor data")
+
+        return weights
 
     # Main function to save a quantized model
     @classmethod
@@ -660,8 +768,7 @@ class BaseSINQModel:
                     print(f"[save_quantized_safetensors] Could not save tokenizer: {e}")
         weights = cls.serialize_weights(model, verbose=verbose)
         cls.save_weights_safetensors(weights, save_dir, filename=filename, max_shard_size=max_shard_size)
-
-
+        
     # Main function to load a SINQ quantized model from either HF hub or locally
     @classmethod
     def from_quantized(
@@ -684,13 +791,14 @@ class BaseSINQModel:
         model.save_dir = save_dir
         cls.setup_model(model)
 
-        # Load serialized weights dict
+        # ---- Load serialized weights dict ON CPU ----
         try:
-            weights = cls.load_weights(save_dir, map_location=device)
+            # Important: keep raw weights on CPU, we'll move tensors to `device` per-module.
+            weights = cls.load_weights(save_dir, map_location="cpu")
         except Exception as e:
             print("Failed to load the weights")
             raise FileNotFoundError(f"Could not load weights from {save_dir}: {e}")
-        
+
         DYNAMIC_TIED = _detect_tied_leaves(model)
 
         # ---- Preflight: every parameterized leaf must have an entry in `weights`
@@ -715,9 +823,8 @@ class BaseSINQModel:
 
         @torch.no_grad()
         def _load_module(module, params=None):
-            # Stateles leaf (e.g., Dropout/GELU) -> nothing to load or move; keep meta ok
+            # Stateless leaf (e.g., Dropout/GELU) -> nothing to load or move; keep meta ok
             if module.name not in weights:
-                # Double-check it's truly stateless
                 has_params_or_buffers = any(True for _ in module.parameters(recurse=False)) or \
                                         any(b is not None for b in module.buffers(recurse=False))
                 if has_params_or_buffers:
@@ -729,9 +836,10 @@ class BaseSINQModel:
                 module.device = device
                 return module
 
-            # Restore from saved dict
+            # Restore from saved dict (CPU tensors)
             state_dict = weights[module.name]
 
+            # Quantized SINQLinear special case
             if "W_q" in state_dict:
                 m = SINQLinear(
                     linear_layer=None,
@@ -749,11 +857,11 @@ class BaseSINQModel:
                 is_buffer = key in getattr(module, "_buffers", {})
 
                 if is_param:
-                    # cast params to compute_dtype
-                    t = tensor.to(device=device, non_blocking=True)
+                    # cast params to compute_dtype and move to `device`
+                    t = tensor.to(device=device, dtype=compute_dtype, non_blocking=True)
                     setattr(module, key, nn.Parameter(t, requires_grad=False))
                 elif is_buffer:
-                    # keep original buffer dtype
+                    # keep original buffer dtype, just move device
                     t = tensor.to(device=device, dtype=tensor.dtype, non_blocking=True)
                     module._buffers[key] = t
                 else:
@@ -764,18 +872,26 @@ class BaseSINQModel:
             module.device = device
             return module
 
-        # Patch all leaves
+        # Patch all leaves (this will move only what we actually attach)
         cls.patch_model(model, _load_module, _load_module, {k: None for k in model.linear_tags})
 
-        # Optional: load non-module tensors if subclass implements it
         if hasattr(cls, "post_module_load"):
             cls.post_module_load(model, weights)
 
-        # re-tie after modules are in place
+        # Re-tie after modules are in place
         _retie_tied_leaves(model, saved_weights=weights)
         model.sinq_quantized = True
         model.base_class = cls
         model.eval()
+
+        # ---- Free the raw weights dict to release memory ----
+        del weights
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
         return model
 
     @classmethod
@@ -935,6 +1051,7 @@ class BaseSINQModel:
                     "*.safetensors",
                     "*.safetensors.index.json",
                     "*.safetensors.index.json.meta.json",
+                    "*.py",
                     "config.json",
                     "generation_config.json",
                     "tokenizer.json",
@@ -965,7 +1082,12 @@ class BaseSINQModel:
         model.save_dir = save_dir
         cls.setup_model(model)
 
-        weights = cls.load_weights_safetensors(save_dir, map_location=device, filename=filename)
+        # ---- Load sharded safetensors ON CPU ----
+        weights = cls.load_weights_safetensors(
+            save_dir,
+            map_location="cpu",        # <--- key change: keep shards on CPU
+            filename=filename,
+        )
 
         DYNAMIC_TIED = _detect_tied_leaves(model)
 
@@ -1004,6 +1126,7 @@ class BaseSINQModel:
 
             state_dict = weights[module.name]
 
+            # Quantized SINQLinear
             if "W_q" in state_dict:
                 m = SINQLinear(
                     linear_layer=None,
@@ -1015,15 +1138,17 @@ class BaseSINQModel:
                 m.device = device
                 return m
 
+            # Regular leaf with tensors
             for key, tensor in state_dict.items():
                 is_param = (key in getattr(module, "_parameters", {}) and getattr(module, "_parameters")[key] is not None)
                 is_buffer = key in getattr(module, "_buffers", {})
 
-            # Regular leaf with tensors
                 if is_param:
-                    t = tensor.to(device=device, non_blocking=True)
+                    # cast params to compute_dtype and move to `device`
+                    t = tensor.to(device=device, dtype=compute_dtype, non_blocking=True)
                     setattr(module, key, nn.Parameter(t, requires_grad=False))
                 elif is_buffer:
+                    # keep original buffer dtype, just move device
                     t = tensor.to(device=device, dtype=tensor.dtype, non_blocking=True)
                     module._buffers[key] = t
                 else:
@@ -1033,19 +1158,29 @@ class BaseSINQModel:
             module.device = device
             return module
 
+        # Patch all leaves
         cls.patch_model(model, _load_module, _load_module, {k: None for k in model.linear_tags})
 
         if hasattr(cls, "post_module_load"):
             cls.post_module_load(model, weights)
 
-        # re-tie after modules are in place
+        # Re-tie after modules are in place
         _retie_tied_leaves(model, saved_weights=weights)
         model.sinq_quantized = True
         model.base_class = cls
         model.eval()
-        return model
-    # -------------------------------------------------------------------------------
 
+        # ---- Free raw weights dict to release CPU/GPU caches ----
+        del weights
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        return model
+
+    # -------------------------------------------------------------------------------
 
 class BaseSINQHFModel(BaseSINQModel):
     # Save model architecture
@@ -1177,7 +1312,282 @@ class BaseSINQHFModel(BaseSINQModel):
 
         return model
 
+class QwenSINQHFModel(BaseSINQHFModel, BasePatch):
+    @classmethod
+    def extra_serialize_weights(cls, model, weights: dict):
+        for name, module in model.named_modules():
+            if module.__class__.__name__ != "Qwen3NextGatedDeltaNet":
+                continue
+
+            extra = {}
+            for attr in ["A_log", "dt_bias"]:
+                if hasattr(module, attr):
+                    val = getattr(module, attr)
+                    if isinstance(val, torch.Tensor):
+                        extra[attr] = val.detach().clone().cpu()
+
+            if extra:
+                if name in weights and isinstance(weights[name], dict):
+                    weights[name].update(extra)
+                else:
+                    weights[name] = extra
+
+    @classmethod
+    def post_module_load(cls, model, weights):
+        import torch
+        from torch import nn
+
+        device = next(model.parameters()).device
+        core = model.model if hasattr(model, "model") else model
+
+        for name, module in core.named_modules():
+            if module.__class__.__name__ != "Qwen3NextGatedDeltaNet":
+                continue
+                
+            full_name = name
+            if full_name not in weights and hasattr(model, "model"):
+                candidate = f"model.{name}"
+                if candidate in weights:
+                    full_name = candidate
+
+            extras = weights.get(full_name, None)
+            if not isinstance(extras, dict):
+                continue
+
+            with torch.no_grad():
+                for attr in ["A_log", "dt_bias"]:
+                    t = extras.get(attr, None)
+                    if t is None or not isinstance(t, torch.Tensor):
+                        continue
+
+                    # keep dtype as saved (usually bf16), just move to device
+                    t = t.to(device=device, non_blocking=True)
+
+                    old = getattr(module, attr, None)
+                    if isinstance(old, nn.Parameter):
+                        setattr(module, attr, nn.Parameter(t, requires_grad=False))
+                    else:
+                        setattr(module, attr, t)
+
+class KimiSINQHFModel(BaseSINQHFModel, BasePatch):
+    @classmethod
+    def extra_serialize_weights(cls, model, weights: dict):
+        for name, module in model.named_modules():
+            if module.__class__.__name__ != "KimiDeltaAttention":
+                continue
+
+            extra = {}
+            for attr in ["A_log", "dt_bias"]:
+                if hasattr(module, attr):
+                    val = getattr(module, attr)
+                    if isinstance(val, torch.Tensor):
+                        extra[attr] = val.detach().clone().cpu()
+
+            if extra:
+                if name in weights and isinstance(weights[name], dict):
+                    weights[name].update(extra)
+                else:
+                    weights[name] = extra
+
+    @classmethod
+    def post_module_load(cls, model, weights):
+        import torch
+        from torch import nn
+
+        device = next(model.parameters()).device
+        core = model.model if hasattr(model, "model") else model
+
+        for name, module in core.named_modules():
+            if module.__class__.__name__ != "KimiDeltaAttention":
+                continue
+                
+            full_name = name
+            if full_name not in weights and hasattr(model, "model"):
+                candidate = f"model.{name}"
+                if candidate in weights:
+                    full_name = candidate
+
+            extras = weights.get(full_name, None)
+            if not isinstance(extras, dict):
+                continue
+
+            with torch.no_grad():
+                for attr in ["A_log", "dt_bias"]:
+                    t = extras.get(attr, None)
+                    if t is None or not isinstance(t, torch.Tensor):
+                        continue
+
+                    # keep dtype as saved (usually bf16), just move to device
+                    t = t.to(device=device, non_blocking=True)
+
+                    old = getattr(module, attr, None)
+                    if isinstance(old, nn.Parameter):
+                        setattr(module, attr, nn.Parameter(t, requires_grad=False))
+                    else:
+                        setattr(module, attr, t)
 
 # Auto class used for HF models if no architecture was manually setup
 class AutoSINQHFModel(BaseSINQHFModel, BasePatch):
-    pass
+    """
+    Generic entrypoint.
+
+    You *always* call:
+
+      - AutoSINQHFModel.save_quantized(...)
+      - AutoSINQHFModel.save_quantized_safetensors(...)
+      - AutoSINQHFModel.from_quantized(...)
+      - AutoSINQHFModel.from_quantized_safetensors(...)
+
+    Internally this chooses QwenSINQHFModel / KimiSINQHFModel / AutoSINQHFModel
+    based on the model (for saving) or the config (for loading).
+    """
+    @classmethod
+    def save_quantized(
+        cls,
+        model,
+        tokenizer,
+        save_dir: str,
+        verbose: bool = False,
+        write_tokenizer: bool = True,
+    ):
+        sinq_cls = _pick_sinq_class(model=model)
+
+        if sinq_cls is cls:
+            # Use BaseSINQHFModel's implementation for the generic case
+            return super().save_quantized(
+                model,
+                tokenizer,
+                save_dir,
+                verbose=verbose,
+                write_tokenizer=write_tokenizer,
+            )
+
+        print(f'{sinq_cls} selected!', flush=True)
+        # Forward to model-specific class (e.g. QwenSINQHFModel / KimiSINQHFModel)
+        return sinq_cls.save_quantized(
+            model,
+            tokenizer,
+            save_dir,
+            verbose=verbose,
+            write_tokenizer=write_tokenizer,
+        )
+
+    @classmethod
+    def save_quantized_safetensors(
+        cls,
+        model,
+        tokenizer,
+        save_dir: str,
+        filename: str = "model.safetensors",
+        verbose: bool = False,
+        max_shard_size: str = "4GB",
+        write_tokenizer: bool = True,
+    ):
+        sinq_cls = _pick_sinq_class(model=model)
+
+        if sinq_cls is cls:
+            return super().save_quantized_safetensors(
+                model,
+                tokenizer,
+                save_dir,
+                filename=filename,
+                verbose=verbose,
+                max_shard_size=max_shard_size,
+                write_tokenizer=write_tokenizer,
+            )
+        
+        print(f'{sinq_cls} selected!', flush=True)
+        return sinq_cls.save_quantized_safetensors(
+            model,
+            tokenizer,
+            save_dir,
+            filename=filename,
+            verbose=verbose,
+            max_shard_size=max_shard_size,
+            write_tokenizer=write_tokenizer,
+        )
+
+    @classmethod
+    def from_quantized(
+        cls,
+        save_dir_or_hub,
+        compute_dtype: torch.dtype = float16,
+        device="cuda",
+        cache_dir: Union[str, None] = "",
+        **kwargs,
+    ):
+        sinq_cls = _pick_sinq_class(
+            save_dir_or_hub=save_dir_or_hub,
+            cache_dir=cache_dir or None,
+            revision=None,
+            local_files_only=False,
+            token=None,
+        )
+
+        if sinq_cls is cls:
+            return super().from_quantized(
+                save_dir_or_hub,
+                compute_dtype=compute_dtype,
+                device=device,
+                cache_dir=cache_dir,
+                **kwargs,
+            )
+        
+        print(f'{sinq_cls} selected!', flush=True)
+        return sinq_cls.from_quantized(
+            save_dir_or_hub,
+            compute_dtype=compute_dtype,
+            device=device,
+            cache_dir=cache_dir,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_quantized_safetensors(
+        cls,
+        save_dir_or_hub,
+        compute_dtype: torch.dtype = float16,
+        device="cuda",
+        filename: str = "model.safetensors",  # kept for API compat
+        cache_dir: Union[str, None] = "",
+        revision: Union[str, None] = None,
+        local_files_only: bool = False,
+        token: Union[str, bool, None] = None,
+        allow_patterns: Union[list, None] = None,
+        **kwargs,
+    ):
+        sinq_cls = _pick_sinq_class(
+            save_dir_or_hub=save_dir_or_hub,
+            cache_dir=cache_dir or None,
+            revision=revision,
+            local_files_only=local_files_only,
+            token=(token if isinstance(token, str) else None),
+        )
+
+        if sinq_cls is cls:
+            return super().from_quantized_safetensors(
+                save_dir_or_hub,
+                compute_dtype=compute_dtype,
+                device=device,
+                filename=filename,
+                cache_dir=cache_dir,
+                revision=revision,
+                local_files_only=local_files_only,
+                token=token,
+                allow_patterns=allow_patterns,
+                **kwargs,
+            )
+        
+        print(f'{sinq_cls} selected!', flush=True)
+        return sinq_cls.from_quantized_safetensors(
+            save_dir_or_hub,
+            compute_dtype=compute_dtype,
+            device=device,
+            filename=filename,
+            cache_dir=cache_dir,
+            revision=revision,
+            local_files_only=local_files_only,
+            token=token,
+            allow_patterns=allow_patterns,
+            **kwargs,
+        )
