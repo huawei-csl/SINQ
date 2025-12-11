@@ -762,8 +762,28 @@ class BaseSINQModel:
         def _is_leaf(m: nn.Module) -> bool:
             return len(m._modules) == 0
 
+        # Build prefix mapping for transformers compatibility
+        # Some models (e.g., Mistral3ForConditionalGeneration) have a nested 'model' attribute
+        # but named_modules() returns names without the 'model.' prefix when iterating from the inner model.
+        # We need to detect this and add the prefix so keys match what from_pretrained() expects.
+        prefix_to_add = ""
+        if hasattr(model, "model") and hasattr(model, "config"):
+            # Check if there's a mismatch: model.state_dict() keys have 'model.' but named_modules() doesn't
+            # This happens when the outer model wraps an inner 'model' attribute
+            sample_sd_keys = list(model.state_dict().keys())[:5]
+            if sample_sd_keys and sample_sd_keys[0].startswith("model."):
+                # Verify named_modules doesn't already have this prefix
+                sample_nm = [n for n, _ in model.named_modules() if n][:5]
+                if sample_nm and not sample_nm[0].startswith("model."):
+                    prefix_to_add = "model."
+                    if verbose:
+                        print(f"[serialize_weights] Adding 'model.' prefix for transformers compatibility")
+
         # 1) Generic leaf capture
         for name, module in model.named_modules():
+            # Apply prefix if needed
+            save_name = prefix_to_add + name if name else name
+
             if name in ignore_keys or not _is_leaf(module):
                 continue
             if name in actually_tied:
@@ -786,11 +806,11 @@ class BaseSINQModel:
                         state = direct
 
                 if len(state) > 0:
-                    weights[name] = state
+                    weights[save_name] = state
 
             except Exception as e:
                 if verbose:
-                    print(f"[serialize_weights] Skipping {name}: {e}")
+                    print(f"[serialize_weights] Skipping {save_name}: {e}")
 
         # 2) Let subclasses add model-specific extras
         if hasattr(cls, "extra_serialize_weights"):
