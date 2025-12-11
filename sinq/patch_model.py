@@ -515,7 +515,7 @@ class BaseSINQModel:
                     remapped[wkey] = wval
 
             if remap_count > 0:
-                print(f"[SINQ] Remapped {remap_count} weight keys (added 'model.' prefix)")
+                print(f"[remap_keys] Remapped {remap_count} weight keys (added 'model.' prefix)")
                 return remapped
 
         # Case 2: Weights have 'model.' prefix, model doesn't
@@ -535,7 +535,7 @@ class BaseSINQModel:
                     remapped[wkey] = wval
 
                 if remap_count > 0:
-                    print(f"[SINQ] Remapped {remap_count} weight keys (stripped 'model.' prefix)")
+                    print(f"[remap_keys] Remapped {remap_count} weight keys (stripped 'model.' prefix)")
                     return remapped
 
         # No remapping needed
@@ -1385,7 +1385,7 @@ class BaseSINQHFModel(BaseSINQModel):
             if text_config.get("model_type") == "ministral3":
                 text_config["model_type"] = "mistral"
                 modified = True
-                print("[SINQ] Patched text_config.model_type: ministral3 -> mistral")
+                print("[compat] Patched text_config.model_type: ministral3 -> mistral")
 
         if modified:
             with open(config_path, "w") as f:
