@@ -177,13 +177,20 @@ def _pick_sinq_class(
 
     # ---- If config not known yet, and we have a repo/path, load config ----
     if cfg is None and save_dir_or_hub is not None:
-        cfg = transformers.AutoConfig.from_pretrained(
-            save_dir_or_hub,
-            cache_dir=cache_dir,
-            revision=revision,
-            local_files_only=local_files_only,
-            token=token,
-        )
+        try:
+            cfg = transformers.AutoConfig.from_pretrained(
+                save_dir_or_hub,
+                cache_dir=cache_dir,
+                revision=revision,
+                local_files_only=local_files_only,
+                token=token,
+            )
+        except KeyError as e:
+            # Handle unsupported model types like 'ministral3'
+            # Fall back to generic AutoSINQHFModel which will patch the config later
+            if "ministral3" in str(e).lower():
+                return AutoSINQHFModel
+            raise
 
     # If still no config, fall back to generic Auto
     if cfg is None:
@@ -470,6 +477,69 @@ class BaseSINQModel:
         return grouped
 
     # ------------------------------------------------------------------------
+
+    @classmethod
+    def _remap_weight_keys(cls, model, weights: dict) -> dict:
+        """
+        Remap weight keys to match model module names.
+
+        Handles cases where:
+        - Model has 'model.' prefix but weights don't (e.g., Mistral3ForConditionalGeneration)
+        - Weights have 'model.' prefix but model doesn't
+
+        This is a best-effort remapping that preserves original keys if no mapping is needed.
+        """
+        # Get all module names from the model
+        model_modules = set()
+        for name, _ in model.named_modules():
+            if name:  # Skip empty root name
+                model_modules.add(name)
+
+        weight_keys = set(weights.keys())
+
+        # Check if we need to remap
+        # Case 1: Model has 'model.' prefix, weights don't
+        missing_in_weights = model_modules - weight_keys
+        prefixed_missing = [m for m in missing_in_weights if m.startswith("model.")]
+
+        if prefixed_missing:
+            # Check if unprefixed versions exist in weights
+            remapped = {}
+            remap_count = 0
+            for wkey, wval in weights.items():
+                prefixed_key = f"model.{wkey}"
+                if prefixed_key in model_modules and wkey not in model_modules:
+                    remapped[prefixed_key] = wval
+                    remap_count += 1
+                else:
+                    remapped[wkey] = wval
+
+            if remap_count > 0:
+                print(f"[SINQ] Remapped {remap_count} weight keys (added 'model.' prefix)")
+                return remapped
+
+        # Case 2: Weights have 'model.' prefix, model doesn't
+        prefixed_weights = [w for w in weight_keys if w.startswith("model.")]
+        if prefixed_weights:
+            unprefixed_needed = [w[6:] for w in prefixed_weights]  # Strip 'model.'
+            if any(u in model_modules for u in unprefixed_needed):
+                remapped = {}
+                remap_count = 0
+                for wkey, wval in weights.items():
+                    if wkey.startswith("model."):
+                        unprefixed = wkey[6:]
+                        if unprefixed in model_modules:
+                            remapped[unprefixed] = wval
+                            remap_count += 1
+                            continue
+                    remapped[wkey] = wval
+
+                if remap_count > 0:
+                    print(f"[SINQ] Remapped {remap_count} weight keys (stripped 'model.' prefix)")
+                    return remapped
+
+        # No remapping needed
+        return weights
 
     # Set-up model with the necessary data
     @classmethod
@@ -1091,6 +1161,11 @@ class BaseSINQModel:
 
         DYNAMIC_TIED = _detect_tied_leaves(model)
 
+        # ---- Remap weight keys to match model module names ----
+        # Some models (e.g., Mistral3ForConditionalGeneration) have module names
+        # prefixed with 'model.' but weights may be saved without this prefix
+        weights = cls._remap_weight_keys(model, weights)
+
         # ---- Preflight (same as from_quantized) ----
         param_leaves = []
         for name, module in model.named_modules():
@@ -1287,6 +1362,35 @@ class BaseSINQHFModel(BaseSINQModel):
         with open(os.path.join(save_dir, "tokenizer_config.json"), "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
 
+    @classmethod
+    def _patch_config_for_compatibility(cls, save_dir):
+        """
+        Patch config.json for compatibility with current transformers version.
+
+        Handles known issues:
+        - ministral3 model_type not yet supported (convert to mistral)
+        """
+        config_path = os.path.join(save_dir, "config.json")
+        if not os.path.exists(config_path):
+            return
+
+        with open(config_path, "r") as f:
+            config_dict = json.load(f)
+
+        modified = False
+
+        # Fix ministral3 -> mistral in text_config (not yet in transformers)
+        if "text_config" in config_dict:
+            text_config = config_dict["text_config"]
+            if text_config.get("model_type") == "ministral3":
+                text_config["model_type"] = "mistral"
+                modified = True
+                print("[SINQ] Patched text_config.model_type: ministral3 -> mistral")
+
+        if modified:
+            with open(config_path, "w") as f:
+                json.dump(config_dict, f, indent=2)
+
     # Create empty model from config
     @classmethod
     def create_model(cls, save_dir, kwargs):
@@ -1295,17 +1399,38 @@ class BaseSINQHFModel(BaseSINQModel):
             if key in kwargs:
                 model_kwargs[key] = kwargs[key]
 
+        # Patch config for compatibility before loading
+        cls._patch_config_for_compatibility(save_dir)
+
         config = transformers.AutoConfig.from_pretrained(save_dir)
 
         auto_class = transformers.AutoModel
 
-        # Todo: add support for other auto models
+        # Determine the appropriate Auto class based on architecture
         archs = config.architectures
         if len(archs) == 1:
-            if ("CausalLM" in archs[0]):
+            arch_name = archs[0]
+            if "CausalLM" in arch_name:
                 auto_class = transformers.AutoModelForCausalLM
-            elif ("SequenceClassification" in archs[0]):
+            elif "SequenceClassification" in arch_name:
                 auto_class = transformers.AutoModelForSequenceClassification
+            elif "ForConditionalGeneration" in arch_name:
+                # Vision-language models like Mistral3ForConditionalGeneration, LlavaForConditionalGeneration
+                # These need AutoModelForVision2Seq to get the full model with lm_head
+                try:
+                    auto_class = transformers.AutoModelForVision2Seq
+                except AttributeError:
+                    # Fallback for older transformers versions
+                    try:
+                        auto_class = transformers.AutoModelForImageTextToText
+                    except AttributeError:
+                        # Last resort: try to import the class directly
+                        model_type = getattr(config, "model_type", "").lower()
+                        if model_type == "mistral3":
+                            from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
+                            with init_empty_weights():
+                                model = Mistral3ForConditionalGeneration(config, **model_kwargs)
+                            return model
 
         with init_empty_weights():
             model = auto_class.from_config(config, **model_kwargs)
