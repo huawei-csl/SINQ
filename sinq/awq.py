@@ -41,12 +41,21 @@ def sinq_fake_quant(matrix, awq_scales, min_max):
     return dq*mu1*mu2
 
 
+def _get_tokenizer(tokenizer_or_processor):
+    """Extract tokenizer from processor if needed (for multimodal models)."""
+    # If it's a processor (e.g., PixtralProcessor), extract the tokenizer
+    if hasattr(tokenizer_or_processor, 'tokenizer'):
+        return tokenizer_or_processor.tokenizer
+    return tokenizer_or_processor
+
+
 def get_calib_dataset(
     tokenizer=None,
     n_samples=16,
     max_seq_len=512,
     col="text",
 ):
+    tokenizer = _get_tokenizer(tokenizer)
     dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
     s = []
     count = 0
@@ -70,6 +79,7 @@ def get_calib_dataset(
 
 
 def get_simple_calibration_data(tokenizer, block_size=128):
+    tokenizer = _get_tokenizer(tokenizer)
     prompt1 = """- Fiction: "In a hidden valley where time moved slower, an old painter discovered a brush that could bring his creations to life. His first stroke awoke something unexpected..."
     - News: "A rare celestial event—a triple conjunction of Jupiter, Saturn, and Mars—will be visible tonight for the first time in over 200 years. Astronomers urge skywatchers not to miss..."
     - Code: `const countVowels = (str) => [...str].filter(c => "aeiou".includes(c.toLowerCase())).length;\nconsole.log(countVowels("Hello, world!"));`
