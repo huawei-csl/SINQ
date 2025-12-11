@@ -167,39 +167,216 @@ def collect_activations(model, calibration_data, num_samples=16):
     """
     activation_cache = {}
     hooks = []
-    
+
     # Hook function to capture activations
     def hook_fn(module, input, output, name):  # Added output parameter
         if name not in activation_cache:
             activation_cache[name] = []
         # Detach and store input activations
         activation_cache[name].append(input[0].detach().cpu().bfloat16())
-    
+
     # Register hooks for all Linear layers
     for name, module in model.named_modules():
         if isinstance(module, nn.Linear):
             hook = module.register_forward_hook(
-                lambda m, i, o, n=name: hook_fn(m, i, o, n) 
+                lambda m, i, o, n=name: hook_fn(m, i, o, n)
             )
             hooks.append(hook)
-    
+
     # Run calibration data through model
     model.eval()
     with torch.no_grad():
         for i, inputs in enumerate(calibration_data):
-            if i >= num_samples: 
+            if i >= num_samples:
                 break
             inputs = inputs.to(model.device)
             model(inputs)
-    
+
     # Remove hooks
     for hook in hooks:
         hook.remove()
-    
+
     # Concatenate collected activations
     for name in activation_cache:
         activation_cache[name] = torch.cat(activation_cache[name], dim=0)
-    
+
+    return activation_cache
+
+
+def _get_transformer_core(model):
+    """
+    Detect model structure and return (core_module, prefix_string, embed_name, norm_name).
+
+    Supports:
+    - Standard: model.layers (prefix="model.layers")
+    - Mistral3: model.language_model.layers (prefix="model.language_model.layers")
+    """
+    core = model
+    parts = []
+    embed_name = "embed_tokens"
+    norm_name = "norm"
+
+    if hasattr(core, "model"):
+        core = core.model
+        parts.append("model")
+
+    if hasattr(core, "language_model"):
+        core = core.language_model
+        parts.append("language_model")
+
+    if not hasattr(core, "layers"):
+        raise ValueError(
+            f"Could not find transformer layers in model structure. "
+            f"Searched path: {'.'.join(parts)}"
+        )
+
+    prefix = ".".join(parts + ["layers"])
+    return core, prefix, embed_name, norm_name
+
+
+@torch.inference_mode()
+def collect_activations_blockwise(model, calibration_data, num_samples=128, device="cuda"):
+    """
+    Memory-efficient activation collection - processes one transformer block at a time.
+
+    This reduces peak GPU memory from O(model_size) to O(block_size + hidden_states).
+    For a 24B model, this means ~3-5GB instead of ~48GB.
+
+    Args:
+        model: The model (kept on CPU, will be modified in-place for device movement)
+        calibration_data: List of input token tensors for calibration
+        num_samples: Number of calibration samples to process
+        device: Target device for computation (default: "cuda")
+
+    Returns:
+        dict mapping layer names to activation tensors (same format as collect_activations)
+    """
+    from tqdm import tqdm
+
+    activation_cache = {}
+
+    # Detect model structure
+    core, prefix, embed_name, norm_name = _get_transformer_core(model)
+    blocks = core.layers
+    num_blocks = len(blocks)
+
+    print(f"[AWQ Blockwise] Collecting activations for {num_blocks} blocks at {prefix}")
+    print(f"[AWQ Blockwise] Processing {min(num_samples, len(calibration_data))} calibration samples")
+
+    # Helper to register hooks on Linear layers in a module
+    def register_hooks(module, name_prefix):
+        hooks = []
+        def hook_fn(mod, inp, out, name):
+            if name not in activation_cache:
+                activation_cache[name] = []
+            activation_cache[name].append(inp[0].detach().cpu().bfloat16())
+
+        for name, submodule in module.named_modules():
+            if isinstance(submodule, nn.Linear):
+                full_name = f"{name_prefix}.{name}" if name else name_prefix
+                hook = submodule.register_forward_hook(
+                    lambda m, i, o, n=full_name: hook_fn(m, i, o, n)
+                )
+                hooks.append(hook)
+        return hooks
+
+    model.eval()
+
+    # Step 1: Move embedding layer to GPU
+    embed_layer = getattr(core, embed_name)
+    embed_layer.to(device).to(torch.bfloat16)
+
+    # Move rotary embeddings if present and keep reference
+    rotary_emb = None
+    if hasattr(core, "rotary_emb"):
+        rotary_emb = core.rotary_emb
+        rotary_emb.to(device)
+
+    # Step 2: Collect hidden states at each block input for all samples
+    # We do this in a streaming fashion: process all samples through each block sequentially
+
+    # First, collect initial embeddings for all samples
+    # Also store sequence lengths for position_ids computation
+    all_hidden_states = []
+    all_seq_lengths = []
+    with torch.no_grad():
+        for i, inputs in enumerate(calibration_data):
+            if i >= num_samples:
+                break
+            inputs = inputs.to(device)
+            hidden_states = embed_layer(inputs)
+            # Store on CPU to save GPU memory
+            all_hidden_states.append(hidden_states.cpu())
+            all_seq_lengths.append(inputs.shape[1])
+
+    # Move embedding back to CPU (but keep rotary_emb on GPU for now)
+    embed_layer.cpu()
+    torch.cuda.empty_cache()
+
+    # Step 3: Process each block sequentially
+    for block_idx in tqdm(range(num_blocks), desc="Collecting AWQ activations"):
+        block = blocks[block_idx]
+        block_name = f"{prefix}.{block_idx}"
+
+        # Move block to GPU
+        block.to(device).to(torch.bfloat16)
+
+        # Register hooks for this block's Linear layers
+        hooks = register_hooks(block, block_name)
+
+        # Process all samples through this block
+        new_hidden_states = []
+        with torch.no_grad():
+            for idx, hidden_states_cpu in enumerate(all_hidden_states):
+                hidden_states = hidden_states_cpu.to(device)
+                seq_len = all_seq_lengths[idx]
+
+                # Prepare position_ids and position_embeddings for attention
+                position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
+
+                # Compute rotary embeddings (position_embeddings) if available
+                position_embeddings = None
+                if rotary_emb is not None:
+                    position_embeddings = rotary_emb(hidden_states, position_ids)
+
+                # cache_position is needed for Ministral3/Llama4-style attention scaling
+                cache_position = torch.arange(seq_len, device=device)
+
+                # Forward through block with required kwargs
+                # Most transformer blocks return (hidden_states, ...) or just hidden_states
+                block_output = block(
+                    hidden_states,
+                    position_ids=position_ids,
+                    position_embeddings=position_embeddings,
+                    cache_position=cache_position,
+                )
+                if isinstance(block_output, tuple):
+                    hidden_states = block_output[0]
+                else:
+                    hidden_states = block_output
+
+                # Store output on CPU
+                new_hidden_states.append(hidden_states.cpu())
+
+        # Update hidden states for next block
+        all_hidden_states = new_hidden_states
+
+        # Cleanup this block
+        for hook in hooks:
+            hook.remove()
+        block.cpu()
+        torch.cuda.empty_cache()
+
+    # Move rotary_emb back to CPU
+    if rotary_emb is not None:
+        rotary_emb.cpu()
+
+    # Step 4: Concatenate collected activations
+    for name in activation_cache:
+        activation_cache[name] = torch.cat(activation_cache[name], dim=0)
+
+    print(f"[AWQ Blockwise] Collected activations for {len(activation_cache)} layers")
+
     return activation_cache
 
 

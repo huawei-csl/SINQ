@@ -574,12 +574,16 @@ class BaseSINQModel:
             calibration_data = get_simple_calibration_data(tokenizer=tokenizer)
             # calibration_data = get_calib_dataset(tokenizer=tokenizer, n_samples=64)
             torch.cuda.empty_cache()
-            try:
-                mc = model.bfloat16().cuda()
-            except:
-                mc = model.bfloat16()
-            activations = collect_activations(mc, calibration_data, 128)
-            del mc
+
+            # Use memory-efficient blockwise collection to avoid OOM on large models
+            # This processes one transformer block at a time instead of loading entire model to GPU
+            from .awq import collect_activations_blockwise
+            activations = collect_activations_blockwise(
+                model.bfloat16(),  # Keep on CPU - blockwise function handles device movement
+                calibration_data,
+                num_samples=128,
+                device="cuda"
+            )
             torch.cuda.empty_cache()
             print('calibration activations collected.')
 
@@ -594,16 +598,26 @@ class BaseSINQModel:
 
         # Get list of all nodes in order
         all_nodes = get_all_children_from_model(model, [])  # ordered nodes
-        try:
-            # Extract block names: This is following Hugging Face models.
-            num_blocks = (
-                len(model.model.layers)
-                if hasattr(model, "model")
-                else len(model.layers)
-            )
-            all_blocks = ["model.layers." + str(i) for i in range(num_blocks)]
-        except Exception:
-            all_blocks = None
+
+        # Extract block names: Support multiple HuggingFace model structures
+        all_blocks = None
+        layer_structures = [
+            # (path to layers, prefix for block names)
+            (lambda m: m.model.language_model.layers, "model.language_model.layers"),  # Mistral3
+            (lambda m: m.model.layers, "model.layers"),  # Standard (Llama, Mistral, etc.)
+            (lambda m: m.layers, "layers"),  # Base models without wrapper
+        ]
+
+        for get_layers, prefix in layer_structures:
+            try:
+                layers = get_layers(model)
+                num_blocks = len(layers)
+                all_blocks = [f"{prefix}.{i}" for i in range(num_blocks)]
+                break
+            except (AttributeError, TypeError):
+                continue
+
+        if all_blocks is None:
             print(
                 "Default model structure not supported. Make sure you feed device as dictionary as {name_block: device}"
             )
