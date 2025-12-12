@@ -154,7 +154,7 @@ def quantize_dual_scale_shift(matrix, min_max, method='sinq', awq_scale=None):
         mu1 = torch.ones_like(mu1)
         mu2 = torch.ones_like(mu2)
 
-    if 'awq' in method:
+    if 'awq' in method and awq_scale is not None:
         matrix = matrix * awq_scale
         mu1 = mu1 / awq_scale.float()
 

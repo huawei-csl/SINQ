@@ -228,12 +228,21 @@ class SINQLinear(nn.Module):
         if runtime_dev.type != "cuda":
             raise RuntimeError(f"GemLite backend requires CUDA tensors; got input on device: {runtime_dev}")
 
+        # Robust device comparison: handle 'cuda' vs 'cuda:0' mismatch
+        # torch.device('cuda') != torch.device('cuda:0') is True, which would
+        # incorrectly trigger rebuild on every forward pass
+        current_device = torch.device(getattr(self, "device", "cuda"))
+        device_mismatch = (
+            current_device.type != runtime_dev.type
+            or (current_device.index is not None and current_device.index != runtime_dev.index)
+        )
+
         need_rebuild = (
             not getattr(self, "_gemlite_ready", False)
             or any(t.device != runtime_dev for t in (self._gl_tensor_args or []))
             or (getattr(self, "_gl_scale2", None) is not None and self._gl_scale2.device != runtime_dev)
             or (getattr(self, "_gl_bias", None) is not None and self._gl_bias is not None and self._gl_bias.device != runtime_dev)
-            or (torch.device(getattr(self, "device", None)) != runtime_dev)
+            or device_mismatch
             or (getattr(self, "_gl_input_torch_dtype", None) != runtime_dtype)
         )
         if need_rebuild:
