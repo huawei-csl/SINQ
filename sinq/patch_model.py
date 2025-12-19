@@ -44,7 +44,7 @@ def _parse_size_to_bytes(x) -> int:
     return int(s)
 
 # Defined what is qualified as "linear layer"
-_QUANT_LAYERS = [nn.Linear, SINQLinear]
+_QUANT_LAYERS = (nn.Linear, SINQLinear)
 _IGNORE_LINEAR = ["lm_head"]
 
 # Finds the parent of a node module named "name"
@@ -81,7 +81,7 @@ def get_all_children_from_model(model, ignore: list = []) -> list:
 def get_linear_tags_from_model(model, ignore: list) -> list:
     linear_tags = set()
     for name, module in model.named_modules():
-        if (type(module) in _QUANT_LAYERS) and (name.split(".")[-1] not in ignore):
+        if isinstance(module, _QUANT_LAYERS) and (name.split(".")[-1] not in ignore):
             linear_tags.add(name_to_linear_tag(name))
     return list(linear_tags)
 
@@ -229,7 +229,7 @@ class BasePatch:
 
         tmp_mapping = {}
         for name, module in model.named_modules():
-            if (type(module) not in _QUANT_LAYERS) and (name not in ignore_tags):
+            if not isinstance(module, _QUANT_LAYERS) and (name not in ignore_tags):
                 tmp_mapping[name] = module
 
         for name in tqdm(tmp_mapping, disable=not verbose):
@@ -254,7 +254,7 @@ class BasePatch:
 
         tmp_mapping = {}
         for name, module in model.named_modules():
-            if (type(module) in _QUANT_LAYERS) and (name not in ignore_tags):
+            if isinstance(module, _QUANT_LAYERS) and (name not in ignore_tags):
                 tmp_mapping[name] = module
 
         for name in tqdm(tmp_mapping, disable=not verbose):
@@ -290,13 +290,13 @@ class BasePatch:
 
     @classmethod
     def get_ignore_layers(cls, model) -> list:
-        """
-        Ignore the root module ("") and all non-leaf container modules.
-        Leaf modules (which actually own tensors) are NOT ignored.
-        """
         layers = {""}
         for name, module in model.named_modules():
-            if not is_leaf_module(module):
+            if is_leaf_module(module):
+                continue
+            has_direct_params = any(p is not None for p in module.parameters(recurse=False))
+            has_direct_bufs = any(b is not None for b in module.buffers(recurse=False))
+            if not (has_direct_params or has_direct_bufs):
                 layers.add(name)
         return list(layers)
 
@@ -781,36 +781,44 @@ class BaseSINQModel:
 
         # 1) Generic leaf capture
         for name, module in model.named_modules():
-            # Apply prefix if needed
-            save_name = prefix_to_add + name if name else name
-
-            if name in ignore_keys or not _is_leaf(module):
+            save_name = name  # IMPORTANT: loader looks up by module.name == name
+            if name in ignore_keys:
                 continue
             if name in actually_tied:
                 continue
-                
-            try:
-                state = module.state_dict()
-                if len(state) == 0:
-                    has_params_or_bufs = (
-                        any(True for _ in module.parameters(recurse=False))
-                        or any(b is not None for b in module.buffers(recurse=False))
-                    )
-                    if has_params_or_bufs:
-                        direct = {}
-                        for k, p in module.named_parameters(recurse=False):
-                            direct[k] = p.detach().clone().cpu()
-                        for k, b in module.named_buffers(recurse=False):
-                            if b is not None:
-                                direct[k] = b.detach().clone().cpu()
-                        state = direct
 
-                if len(state) > 0:
-                    weights[save_name] = state
+            # 1) If SINQLinear: keep your quantized state (W_q, meta, etc.)
+            if isinstance(module, SINQLinear):
+                weights[save_name] = module.state_dict()  # includes W_q etc.
+                continue
 
-            except Exception as e:
-                if verbose:
-                    print(f"[serialize_weights] Skipping {save_name}: {e}")
+            # 2) For everything else: if it’s a leaf with params/buffers, save full leaf state_dict
+            if len(module._modules) == 0:
+                sd = module.state_dict()
+                if len(sd) == 0:
+                    # fallback: grab direct params/buffers explicitly
+                    sd = {}
+                    for k, p in module.named_parameters(recurse=False):
+                        if p is not None:
+                            sd[k] = p.detach().clone().cpu()
+                    for k, b in module.named_buffers(recurse=False):
+                        if b is not None:
+                            sd[k] = b.detach().clone().cpu()
+
+                if len(sd) > 0:
+                    weights[name] = sd
+                continue
+
+            # 3) Additionally: if a non-leaf owns direct params/buffers (embeddings blocks), save those too
+            direct = {}
+            for k, p in module.named_parameters(recurse=False):
+                if p is not None:
+                    direct[k] = p.detach().clone().cpu()
+            for k, b in module.named_buffers(recurse=False):
+                if b is not None:
+                    direct[k] = b.detach().clone().cpu()
+            if direct:
+                weights[save_name] = direct
 
         # 2) Let subclasses add model-specific extras
         if hasattr(cls, "extra_serialize_weights"):
@@ -1452,11 +1460,10 @@ class BaseSINQHFModel(BaseSINQModel):
                 # Vision-language models like Mistral3ForConditionalGeneration, LlavaForConditionalGeneration
                 # These need AutoModelForVision2Seq to get the full model with lm_head
                 try:
-                    auto_class = transformers.AutoModelForVision2Seq
+                    auto_class = transformers.AutoModelForImageTextToText
                 except AttributeError:
-                    # Fallback for older transformers versions
                     try:
-                        auto_class = transformers.AutoModelForImageTextToText
+                        auto_class = transformers.AutoModelForVision2Seq
                     except AttributeError:
                         # Last resort: try to import the class directly
                         model_type = getattr(config, "model_type", "").lower()
@@ -1464,6 +1471,10 @@ class BaseSINQHFModel(BaseSINQModel):
                             from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
                             with init_empty_weights():
                                 model = Mistral3ForConditionalGeneration(config, **model_kwargs)
+                        if model_type == "gemma3":
+                            from transformers.models.gemma3.modeling_gemma3 import Gemma3ForConditionalGeneration
+                            with init_empty_weights():
+                                model = Gemma3ForConditionalGeneration(config, **model_kwargs)
                             return model
 
         with init_empty_weights():
@@ -1750,3 +1761,4 @@ class AutoSINQHFModel(BaseSINQHFModel, BasePatch):
             allow_patterns=allow_patterns,
             **kwargs,
         )
+
