@@ -207,7 +207,15 @@ def tiled_quant_rectangle(M, min_max, block, method='dual', awq_scale=None):
     q = quantize_dual_scale_shift
     mshape = M.shape
     H,W = M.shape
-    assert W%block==0, 'block must divide W'
+    block = int(block)
+    orig = block
+
+    while block >= 16 and (W % block) != 0:
+        block //= 2
+
+    assert (W % block) == 0 and block >= 16, f"block must divide W (W={W}, block={block})"
+    if block != orig:
+        print(f"[SINQ] Adjusted tile {orig} -> {block} for W={W}", flush=True)
     n_w = W//block
 
     M = M.view(H, W//block, block)
