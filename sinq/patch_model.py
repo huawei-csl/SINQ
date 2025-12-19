@@ -177,13 +177,20 @@ def _pick_sinq_class(
 
     # ---- If config not known yet, and we have a repo/path, load config ----
     if cfg is None and save_dir_or_hub is not None:
-        cfg = transformers.AutoConfig.from_pretrained(
-            save_dir_or_hub,
-            cache_dir=cache_dir,
-            revision=revision,
-            local_files_only=local_files_only,
-            token=token,
-        )
+        try:
+            cfg = transformers.AutoConfig.from_pretrained(
+                save_dir_or_hub,
+                cache_dir=cache_dir,
+                revision=revision,
+                local_files_only=local_files_only,
+                token=token,
+            )
+        except KeyError as e:
+            # Handle unsupported model types like 'ministral3'
+            # Fall back to generic AutoSINQHFModel which will patch the config later
+            if "ministral3" in str(e).lower():
+                return AutoSINQHFModel
+            raise
 
     # If still no config, fall back to generic Auto
     if cfg is None:
@@ -471,6 +478,69 @@ class BaseSINQModel:
 
     # ------------------------------------------------------------------------
 
+    @classmethod
+    def _remap_weight_keys(cls, model, weights: dict) -> dict:
+        """
+        Remap weight keys to match model module names.
+
+        Handles cases where:
+        - Model has 'model.' prefix but weights don't (e.g., Mistral3ForConditionalGeneration)
+        - Weights have 'model.' prefix but model doesn't
+
+        This is a best-effort remapping that preserves original keys if no mapping is needed.
+        """
+        # Get all module names from the model
+        model_modules = set()
+        for name, _ in model.named_modules():
+            if name:  # Skip empty root name
+                model_modules.add(name)
+
+        weight_keys = set(weights.keys())
+
+        # Check if we need to remap
+        # Case 1: Model has 'model.' prefix, weights don't
+        missing_in_weights = model_modules - weight_keys
+        prefixed_missing = [m for m in missing_in_weights if m.startswith("model.")]
+
+        if prefixed_missing:
+            # Check if unprefixed versions exist in weights
+            remapped = {}
+            remap_count = 0
+            for wkey, wval in weights.items():
+                prefixed_key = f"model.{wkey}"
+                if prefixed_key in model_modules and wkey not in model_modules:
+                    remapped[prefixed_key] = wval
+                    remap_count += 1
+                else:
+                    remapped[wkey] = wval
+
+            if remap_count > 0:
+                print(f"[remap_keys] Remapped {remap_count} weight keys (added 'model.' prefix)")
+                return remapped
+
+        # Case 2: Weights have 'model.' prefix, model doesn't
+        prefixed_weights = [w for w in weight_keys if w.startswith("model.")]
+        if prefixed_weights:
+            unprefixed_needed = [w[6:] for w in prefixed_weights]  # Strip 'model.'
+            if any(u in model_modules for u in unprefixed_needed):
+                remapped = {}
+                remap_count = 0
+                for wkey, wval in weights.items():
+                    if wkey.startswith("model."):
+                        unprefixed = wkey[6:]
+                        if unprefixed in model_modules:
+                            remapped[unprefixed] = wval
+                            remap_count += 1
+                            continue
+                    remapped[wkey] = wval
+
+                if remap_count > 0:
+                    print(f"[remap_keys] Remapped {remap_count} weight keys (stripped 'model.' prefix)")
+                    return remapped
+
+        # No remapping needed
+        return weights
+
     # Set-up model with the necessary data
     @classmethod
     def setup_model(cls, model):
@@ -504,12 +574,16 @@ class BaseSINQModel:
             calibration_data = get_simple_calibration_data(tokenizer=tokenizer)
             # calibration_data = get_calib_dataset(tokenizer=tokenizer, n_samples=64)
             torch.cuda.empty_cache()
-            try:
-                mc = model.bfloat16().cuda()
-            except:
-                mc = model.bfloat16()
-            activations = collect_activations(mc, calibration_data, 128)
-            del mc
+
+            # Use memory-efficient blockwise collection to avoid OOM on large models
+            # This processes one transformer block at a time instead of loading entire model to GPU
+            from .awq import collect_activations_blockwise
+            activations = collect_activations_blockwise(
+                model.bfloat16(),  # Keep on CPU - blockwise function handles device movement
+                calibration_data,
+                num_samples=128,
+                device="cuda"
+            )
             torch.cuda.empty_cache()
             print('calibration activations collected.')
 
@@ -524,16 +598,26 @@ class BaseSINQModel:
 
         # Get list of all nodes in order
         all_nodes = get_all_children_from_model(model, [])  # ordered nodes
-        try:
-            # Extract block names: This is following Hugging Face models.
-            num_blocks = (
-                len(model.model.layers)
-                if hasattr(model, "model")
-                else len(model.layers)
-            )
-            all_blocks = ["model.layers." + str(i) for i in range(num_blocks)]
-        except Exception:
-            all_blocks = None
+
+        # Extract block names: Support multiple HuggingFace model structures
+        all_blocks = None
+        layer_structures = [
+            # (path to layers, prefix for block names)
+            (lambda m: m.model.language_model.layers, "model.language_model.layers"),  # Mistral3
+            (lambda m: m.model.layers, "model.layers"),  # Standard (Llama, Mistral, etc.)
+            (lambda m: m.layers, "layers"),  # Base models without wrapper
+        ]
+
+        for get_layers, prefix in layer_structures:
+            try:
+                layers = get_layers(model)
+                num_blocks = len(layers)
+                all_blocks = [f"{prefix}.{i}" for i in range(num_blocks)]
+                break
+            except (AttributeError, TypeError):
+                continue
+
+        if all_blocks is None:
             print(
                 "Default model structure not supported. Make sure you feed device as dictionary as {name_block: device}"
             )
@@ -678,8 +762,28 @@ class BaseSINQModel:
         def _is_leaf(m: nn.Module) -> bool:
             return len(m._modules) == 0
 
+        # Build prefix mapping for transformers compatibility
+        # Some models (e.g., Mistral3ForConditionalGeneration) have a nested 'model' attribute
+        # but named_modules() returns names without the 'model.' prefix when iterating from the inner model.
+        # We need to detect this and add the prefix so keys match what from_pretrained() expects.
+        prefix_to_add = ""
+        if hasattr(model, "model") and hasattr(model, "config"):
+            # Check if there's a mismatch: model.state_dict() keys have 'model.' but named_modules() doesn't
+            # This happens when the outer model wraps an inner 'model' attribute
+            sample_sd_keys = list(model.state_dict().keys())[:5]
+            if sample_sd_keys and sample_sd_keys[0].startswith("model."):
+                # Verify named_modules doesn't already have this prefix
+                sample_nm = [n for n, _ in model.named_modules() if n][:5]
+                if sample_nm and not sample_nm[0].startswith("model."):
+                    prefix_to_add = "model."
+                    if verbose:
+                        print(f"[serialize_weights] Adding 'model.' prefix for transformers compatibility")
+
         # 1) Generic leaf capture
         for name, module in model.named_modules():
+            # Apply prefix if needed
+            save_name = prefix_to_add + name if name else name
+
             if name in ignore_keys or not _is_leaf(module):
                 continue
             if name in actually_tied:
@@ -702,11 +806,11 @@ class BaseSINQModel:
                         state = direct
 
                 if len(state) > 0:
-                    weights[name] = state
+                    weights[save_name] = state
 
             except Exception as e:
                 if verbose:
-                    print(f"[serialize_weights] Skipping {name}: {e}")
+                    print(f"[serialize_weights] Skipping {save_name}: {e}")
 
         # 2) Let subclasses add model-specific extras
         if hasattr(cls, "extra_serialize_weights"):
@@ -1091,6 +1195,11 @@ class BaseSINQModel:
 
         DYNAMIC_TIED = _detect_tied_leaves(model)
 
+        # ---- Remap weight keys to match model module names ----
+        # Some models (e.g., Mistral3ForConditionalGeneration) have module names
+        # prefixed with 'model.' but weights may be saved without this prefix
+        weights = cls._remap_weight_keys(model, weights)
+
         # ---- Preflight (same as from_quantized) ----
         param_leaves = []
         for name, module in model.named_modules():
@@ -1287,6 +1396,35 @@ class BaseSINQHFModel(BaseSINQModel):
         with open(os.path.join(save_dir, "tokenizer_config.json"), "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
 
+    @classmethod
+    def _patch_config_for_compatibility(cls, save_dir):
+        """
+        Patch config.json for compatibility with current transformers version.
+
+        Handles known issues:
+        - ministral3 model_type not yet supported (convert to mistral)
+        """
+        config_path = os.path.join(save_dir, "config.json")
+        if not os.path.exists(config_path):
+            return
+
+        with open(config_path, "r") as f:
+            config_dict = json.load(f)
+
+        modified = False
+
+        # Fix ministral3 -> mistral in text_config (not yet in transformers)
+        if "text_config" in config_dict:
+            text_config = config_dict["text_config"]
+            if text_config.get("model_type") == "ministral3":
+                text_config["model_type"] = "mistral"
+                modified = True
+                print("[compat] Patched text_config.model_type: ministral3 -> mistral")
+
+        if modified:
+            with open(config_path, "w") as f:
+                json.dump(config_dict, f, indent=2)
+
     # Create empty model from config
     @classmethod
     def create_model(cls, save_dir, kwargs):
@@ -1295,17 +1433,38 @@ class BaseSINQHFModel(BaseSINQModel):
             if key in kwargs:
                 model_kwargs[key] = kwargs[key]
 
+        # Patch config for compatibility before loading
+        cls._patch_config_for_compatibility(save_dir)
+
         config = transformers.AutoConfig.from_pretrained(save_dir)
 
         auto_class = transformers.AutoModel
 
-        # Todo: add support for other auto models
+        # Determine the appropriate Auto class based on architecture
         archs = config.architectures
         if len(archs) == 1:
-            if ("CausalLM" in archs[0]):
+            arch_name = archs[0]
+            if "CausalLM" in arch_name:
                 auto_class = transformers.AutoModelForCausalLM
-            elif ("SequenceClassification" in archs[0]):
+            elif "SequenceClassification" in arch_name:
                 auto_class = transformers.AutoModelForSequenceClassification
+            elif "ForConditionalGeneration" in arch_name:
+                # Vision-language models like Mistral3ForConditionalGeneration, LlavaForConditionalGeneration
+                # These need AutoModelForVision2Seq to get the full model with lm_head
+                try:
+                    auto_class = transformers.AutoModelForVision2Seq
+                except AttributeError:
+                    # Fallback for older transformers versions
+                    try:
+                        auto_class = transformers.AutoModelForImageTextToText
+                    except AttributeError:
+                        # Last resort: try to import the class directly
+                        model_type = getattr(config, "model_type", "").lower()
+                        if model_type == "mistral3":
+                            from transformers.models.mistral3.modeling_mistral3 import Mistral3ForConditionalGeneration
+                            with init_empty_weights():
+                                model = Mistral3ForConditionalGeneration(config, **model_kwargs)
+                            return model
 
         with init_empty_weights():
             model = auto_class.from_config(config, **model_kwargs)
