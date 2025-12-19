@@ -72,6 +72,10 @@ class SINQLinear(nn.Module):
             in_f = getattr(self.linear_layer, "in_features", None)
             if out_f is None or in_f is None or out_f < 16 or in_f < 16:
                 can_use_gemlite = False
+            if in_f%qc.get('group_size')!=0 or in_f%32!=0:
+                print(f"[SINQ] Input feature dimension is {in_f}, it is not divisible by the provided group size {qc.get('group_size')} or by 32. " \
+                "Gemlite kernel cannot be applied for this layer.")
+                can_use_gemlite = False
         
         if can_use_gemlite:
             self.use_gemlite = True
@@ -492,3 +496,4 @@ def sinq_base_quant_config(
 
 # Alias
 BaseQuantizeConfig = sinq_base_quant_config
+
