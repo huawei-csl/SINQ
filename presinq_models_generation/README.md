@@ -20,12 +20,19 @@ In this folder you can find scripts to:
 - ✅ Optional saving of **Pre-SINQ** best model to disk
 
 ---
-
-## Installation
+## Pre-requisite
 
 1) Install SINQ library from the official repository
 2) Install the repository that contains the code necessary to run the desired quantization strategy
 3) Check that all the path in the script are correctly set
+4) Create the pile_5k.txt file by using the ```convert_hf_dataset_to_txt.py```. You can do it by running
+```bash
+python convert_hf_dataset_to_txt.py \
+--dataset mit-han-lab/pile-val-backup \
+--split validation \
+--max_rows 5000 \
+--out pile_5k.txt
+```
 
 ## Script Arguments
 
