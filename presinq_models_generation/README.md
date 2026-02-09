@@ -4,7 +4,7 @@ In this folder you can find scripts to:
 1. Load a HuggingFace causal language model (e.g., Qwen3 or DeepSeek Lite),
 2. Apply **Pre-SINQ** (Sinkhorn-based weight rescaling / absorption),
 3. Quantize the model using **HQQ**, **AWQ** or any **GGUF** quantization method,
-4. Optionally run a small hyperparameter search to find the best **Pre-SINQ** model for the selected quantization method. To evaluate the model it is possible to use a small test set (calibration_text.txt) or a larger one (pile_5K.txt).
+4. Optionally run a small hyperparameter search to find the best **Pre-SINQ** model for the selected quantization method. To evaluate the model it is possible to use a small calibration set (calibration_text.txt) or a larger one (pile_5K.txt).
 5. Optionally validate configurations using **WikiText-2 perplexity**.
 
 ---
