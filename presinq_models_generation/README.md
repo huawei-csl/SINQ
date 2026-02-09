@@ -148,3 +148,8 @@ python presinq_gguf.py \
 
 The PreSINQ models are models in full precision (fp16), they can be quantized and the quantization method should be the same of the one used in the hyperaparameters search for the PreSINQ model. 
 This strategy allows to use the PreSINQ model in all popular inference framwork like Llama.cpp, SGLang, vllm and Hugging Face without the specific need of having SINQ quantization strategy already integrated in the framework.
+
+## Release of GGUF PreSINQ models
+
+Several GGUF PreSINQ models have already been released and are available on our [Hugging Face Hub](https://huggingface.co/huawei-csl). These models represent the best PreSINQ configurations for the quantization methods specified in their respective model cards.
+However, as described in each model card, strong PreSINQ models can also be obtained using a faster, less compute-intensive PreSINQ script, which evaluates a smaller set of candidate configurations.
