@@ -1,10 +1,10 @@
 # Pre-SINQ Quantization Runner
 
-This repository provides a script to:
+In this folder you can find scripts to:
 1. Load a HuggingFace causal language model (e.g., Qwen3 or DeepSeek Lite),
 2. Apply **Pre-SINQ** (Sinkhorn-based weight rescaling / absorption),
 3. Quantize the model using **HQQ**, **AWQ** or any **GGUF** quantization method,
-4. Optionally run a small hyperparameter search to find the best **Pre-SINQ** model for the selected quantization method,
+4. Optionally run a small hyperparameter search to find the best **Pre-SINQ** model for the selected quantization method. To evaluate the model it is possible to use a small test set (calibration_text.txt) or a larger one (pile_5K.txt).
 5. Optionally validate configurations using **WikiText-2 perplexity**.
 
 ---
@@ -23,9 +23,9 @@ This repository provides a script to:
 
 ## Installation
 
-### 1) Install SINQ library from the official repository 
-### 2) Install the repository that containes the code necessary to run the desired quantization strategy
-### 3) Check that all the path in the script are correctly set to the one in your system
+1) Install SINQ library from the official repository
+2) Install the repository that contains the code necessary to run the desired quantization strategy
+3) Check that all the path in the script are correctly set
 
 ## Script Arguments
 
