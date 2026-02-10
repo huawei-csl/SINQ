@@ -20,6 +20,11 @@
 > ⏱️ SINQ quantizes **Qwen3-14B** in just **~21 sec** and **DeepSeekV2.5-236B** in **~5 min**
 
 ---
+## News:
+🆕 [23/12/2025] **A first GGUF model with pre-SINQ! 🤗**
+> **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)**!**
+
+> Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
 
 🆕 [14/11/2025] **PR to integrate SINQ into HF transformers! 🤗**
 > **Issue + PR have been opened to integrate SINQ into HF transformers. You can follow the discussion [here](https://github.com/huggingface/transformers/issues/42116)!
@@ -39,9 +44,10 @@
 - <u>[3. Quantize (and save) any LLM with SINQ](#3-quantize-any-llm-with-sinq)</u>
 - [4. Run pre-quantized SINQ models from Hugging Face](#4-run-pre-quantized-sinq-models-from-hugging-face)
 - [5. How to reproduce paper results](#5-how-to-reproduce-paper-results)
-- [6. Ongoing updates on new features and integrations](#6-ongoing-updates-on-new-features-and-integrations)
-- [7. How to Cite This Work](#7-how-to-cite-this-work)
-- [8. Related Repositories](#8-related-repositories)
+- [6. Pre-SINQ: SINQhorn normalization for GGUFs (and more)!](#6-pre-sinq-sinqhorn-normalization-for-ggufs-and-more)
+- [7. Ongoing updates on new features and integrations](#7-ongoing-updates-on-new-features-and-integrations)
+- [8. How to Cite This Work](#8-how-to-cite-this-work)
+- [9. Related Repositories](#9-related-repositories)
 
 #### 📊 Feature Comparison: SINQ vs HQQ _(calibration-free)_ and A-SINQ vs AWQ _(calibrated)_
 
@@ -419,21 +425,38 @@ Customize experiments with the following command-line arguments:
 > 📝 **Note:** All results reported in the paper were obtained using the evaluation framework from [Efficient-ML/Qwen3-Quantization](https://github.com/Efficient-ML/Qwen3-Quantization) rather than `lm-eval`. 
 </details>
 
-## 6. Ongoing updates on new features and integrations
+## 6. _Pre-SINQ_: SINQhorn normalization for GGUFs (and more)!
+_Pre-SINQ_ is a model-agnostic reparameterization algorithm that applies the Sinkhorn-inspired normalization used in SINQ to make model weights easier to quantize while fully preserving the model’s function (e.g., the output of the pre-SINQ model is mathematically identical to the one of the original model and introduces no computation or memory overhead). Pre-SINQ leaves you free to choose your preferred quantizer, being fully compatible with GGUF, AWQ, GPTQ, and HQQ.
+<p align="center">
+  <img 
+    src="imgs/pre-sinq_example.png"
+    alt="Example of pre-SINQ for an MLP block of an LLM"
+    style="max-width: 100%; height: auto; width: 650px;"
+  />
+  <br>
+  <em>Example of pre-SINQ for an MLP block of an LLM. Scales are computed with our sinkhorn-inspired algorithm and abosrbed into the model weights.</em>
+</p>
+
+- **S2 scales** are computed using our Sinkhorn-inspired algorithm and absorbed directly into the model.  
+- The transformed model can then be quantized with any existing technique.  
+- **Available pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/sinq)** (and we’re continuously adding more!).
+
+## 7. Ongoing updates on new features and integrations
 
 We are actively expanding SINQ with new features and integrations. Stay tuned here for the latest updates:
 
 - [26/09/2025] - SINQ paper released on [**arXiv**](https://arxiv.org/abs/2509.22944)
 - [30/09/2025] - SINQ GitHub repository made public  
 - [02/10/2025] - SINQ paper featured on 🤗 [**Hugging Face Papers**](https://huggingface.co/papers/2509.22944)
-- [17/10/2025] - First pre-quantized **SINQ models** available on 🤗[**Hugging Face Hub**](https://huggingface.co/huawei-csl)! 🆕 
+- [17/10/2025] - First pre-quantized **SINQ models** available on 🤗[**Hugging Face Hub**](https://huggingface.co/huawei-csl)! 
 - [23/10/2025] - Faster inference with gemlite backend (4-bit 1D tiling)
+- 🆕 [23/12/2025] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/sinq)!
 - 🔜 **Coming soon** - 🤗 Integration with **Hugging Face Transformers**  
 - 🔜 **Coming soon** - Support for **Conv2D layers** and **timm models** for computer vision tasks  
 - 🔜 **Work in progress** - Support for **mixed-precision quantization** (combine multiple bitwidths for optimal accuracy-efficiency balance)  
 - 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code>.
 
-## 7. How to Cite This Work
+## 8. How to Cite This Work
 
 If you find **SINQ** useful in your research or applications, please cite our <a href="http://arxiv.org/abs/2509.22944" target="_blank"><strong>paper</strong></a>:
 
@@ -450,7 +473,7 @@ If you find **SINQ** useful in your research or applications, please cite our <a
 ```
 
 
-## 8. Related Repositories
+## 9. Related Repositories
 
 This project builds upon and extends the excellent work from the following open-source projects:
 
