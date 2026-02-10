@@ -22,7 +22,7 @@
 ---
 ## News:
 🆕 [10/02/2026] **A first GGUF model with pre-SINQ! 🤗**
-> **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/presinq-gguf)**!**
+> **First GGUF model using pre-SINQ available in our collection **[huawei-csl/PreSINQ GGUF](https://huggingface.co/collections/huawei-csl/presinq-gguf)** collection!**
 
 
 > Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
