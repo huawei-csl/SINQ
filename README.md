@@ -6,7 +6,7 @@
 
 <table border="0" cellspacing="0" cellpadding="0">
   <tr>
-    <td><img src="imgs/logo.png" alt="SINQ Logo" width="110"></td>
+    <td><img src="imgs/sinq_gguf.png" alt="SINQ Logo" width="110"></td>
     <td style="vertical-align: middle;"><h1>SINQ: Sinkhorn-Normalized Quantization for Calibration-Free Low-Precision LLMs</h1></td>
   </tr>
 </table>
@@ -22,7 +22,7 @@
 ---
 ## News:
 🆕 [10/02/2026] **A first GGUF model with pre-SINQ! 🤗**
-> **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)**!**
+> **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/presinq-gguf)**!**
 
 > Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
 
