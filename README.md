@@ -24,10 +24,13 @@
 🆕 [10/02/2026] **A first GGUF model with pre-SINQ! 🤗**
 > **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/presinq-gguf)**!**
 
+
 > Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
 
-🆕 [14/11/2025] **PR to integrate SINQ into HF transformers! 🤗**
-> **Issue + PR have been opened to integrate SINQ into HF transformers. You can follow the discussion [here](https://github.com/huggingface/transformers/pull/43112)!
+**You can vote** for the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!
+
+🆕 [14/11/2025] **PR to integrate SINQ into HF Transformers! 🤗**
+> **Issue + PR** have been opened to **integrate SINQ into HF transformers**. You can follow the discussion [here](https://github.com/huggingface/transformers/pull/43112)!
 
 >  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference.  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
@@ -439,7 +442,10 @@ _Pre-SINQ_ is a model-agnostic reparameterization algorithm that applies the Sin
 
 - **S2 scales** are computed using our Sinkhorn-inspired algorithm and absorbed directly into the model.  
 - The transformed model can then be quantized with any existing technique.  
-- **Available pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)** (and we’re continuously adding more!).
+- **Pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)** (and we’re continuously adding more!).
+- More information and sample code to create Pre-SINQ GGUF models in `./presinq_models_generation`!
+
+**Vote** to select the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!**
 
 ## 7. Ongoing updates on new features and integrations
 
