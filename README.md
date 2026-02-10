@@ -445,7 +445,7 @@ _Pre-SINQ_ is a model-agnostic reparameterization algorithm that applies the Sin
 - **Pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)** (and we’re continuously adding more!).
 - More information and sample code to create Pre-SINQ GGUF models in `./presinq_models_generation`!
 
-**Vote** to select the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!**
+**Vote** to select the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!
 
 ## 7. Ongoing updates on new features and integrations
 
