@@ -21,13 +21,13 @@
 
 ---
 ## News:
-🆕 [23/12/2025] **A first GGUF model with pre-SINQ! 🤗**
+🆕 [10/02/2026] **A first GGUF model with pre-SINQ! 🤗**
 > **First GGUF model using pre-SINQ available in our collection **[huawei-csl/SINQ collection](https://huggingface.co/collections/huawei-csl/sinq)**!**
 
 > Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
 
 🆕 [14/11/2025] **PR to integrate SINQ into HF transformers! 🤗**
-> **Issue + PR have been opened to integrate SINQ into HF transformers. You can follow the discussion [here](https://github.com/huggingface/transformers/issues/42116)!
+> **Issue + PR have been opened to integrate SINQ into HF transformers. You can follow the discussion [here](https://github.com/huggingface/transformers/pull/43112)!
 
 >  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference.  
 > In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
@@ -439,7 +439,7 @@ _Pre-SINQ_ is a model-agnostic reparameterization algorithm that applies the Sin
 
 - **S2 scales** are computed using our Sinkhorn-inspired algorithm and absorbed directly into the model.  
 - The transformed model can then be quantized with any existing technique.  
-- **Available pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/sinq)** (and we’re continuously adding more!).
+- **Available pre-SINQ GGUF models are available [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)** (and we’re continuously adding more!).
 
 ## 7. Ongoing updates on new features and integrations
 
@@ -450,11 +450,11 @@ We are actively expanding SINQ with new features and integrations. Stay tuned he
 - [02/10/2025] - SINQ paper featured on 🤗 [**Hugging Face Papers**](https://huggingface.co/papers/2509.22944)
 - [17/10/2025] - First pre-quantized **SINQ models** available on 🤗[**Hugging Face Hub**](https://huggingface.co/huawei-csl)! 
 - [23/10/2025] - Faster inference with gemlite backend (4-bit 1D tiling)
-- 🆕 [23/12/2025] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/sinq)!
+- 🆕 [10/02/2026] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)!
 - 🔜 **Coming soon** - 🤗 Integration with **Hugging Face Transformers**  
 - 🔜 **Coming soon** - Support for **Conv2D layers** and **timm models** for computer vision tasks  
 - 🔜 **Work in progress** - Support for **mixed-precision quantization** (combine multiple bitwidths for optimal accuracy-efficiency balance)  
-- 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code>.
+- 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>.
 
 ## 8. How to Cite This Work
 
