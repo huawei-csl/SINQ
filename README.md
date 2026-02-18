@@ -21,19 +21,18 @@
 
 ---
 ## News:
+🆕 [18/02/2025] **SINQ is now integrated into HF Transformers! 🤗**
+> **You can now use SINQ in 🤗 Transformers in a super simplified way** thanks to our **SinqConfig** compatible with **HF AutoModelForCausalLM()**! 
+
+More information directly on the HF website [here](https://huggingface.co/docs/transformers/main/quantization/sinq)!
+
 🆕 [10/02/2026] **A first GGUF model with pre-SINQ! 🤗**
 > **First GGUF model using pre-SINQ available in our collection **[huawei-csl/PreSINQ GGUF](https://huggingface.co/collections/huawei-csl/presinq-gguf)** collection!**
 
 
 > Thanks to our new _pre-SINQ_ algorithm (see details [here](#5-how-to-reproduce-paper-results)), we can finally bring the strengths of SINQhorn normalization together with the advantages of GGUF quantization! Many more models coming soon!
 
-**You can vote** for the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!
-
-🆕 [14/11/2025] **PR to integrate SINQ into HF Transformers! 🤗**
-> **Issue + PR** have been opened to **integrate SINQ into HF transformers**. You can follow the discussion [here](https://github.com/huggingface/transformers/pull/43112)!
-
->  Note: We’re also actively working to add support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>, and <code>llama.cpp</code> to enable fast SINQ-ference.  
-> In the meantime, you can ⭐️ **star** and **watch** the repo to stay updated!
+>**You can vote** for the next SINQ GGUF model **[here](https://github.com/huawei-csl/SINQ/discussions/21)**!
 ---
 
 ## 🚀 Welcome to the **official SINQ repository**!
@@ -118,9 +117,50 @@ With **SINQ**, they become **spread out and less severe**, preserving model accu
 
 ## 3. Quantize any LLM with SINQ
 
-### Setup & Quick Start
+<details>
+<summary><strong>Directly run with HF Transformers</strong></summary>
 
-First, install the dependencies and set up the package:
+<br>
+
+Since SINQ is now integrated into 🤗 Hugging Face Transformers, you can quantize models directly using the native Transformers API without installing SINQ separately (SINQ only, ASINQ is not supported on HF).
+
+```python
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, SinqConfig
+
+model_name = "Qwen/Qwen3-1.7B"
+
+# Create SINQ quantization config
+quant_cfg = SinqConfig(
+    nbits=4,
+    group_size=64,
+    modules_to_not_convert=["lm_head"],
+)
+
+# Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+# Load and quantize model in one step
+qmodel = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    quantization_config=quant_cfg,
+    dtype=torch.bfloat16,
+)
+
+# Model is ready for inference
+```
+
+This uses the built-in Transformers integration and requires only:
+
+```bash
+pip install transformers
+```
+
+</details>
+
+### Setup & Quick Start from source
+
+First, clone the repository and install the dependencies:
 
 ```bash
 # 1. Clone the repository
@@ -457,7 +497,7 @@ We are actively expanding SINQ with new features and integrations. Stay tuned he
 - [17/10/2025] - First pre-quantized **SINQ models** available on 🤗[**Hugging Face Hub**](https://huggingface.co/huawei-csl)! 
 - [23/10/2025] - Faster inference with gemlite backend (4-bit 1D tiling)
 - 🆕 [10/02/2026] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)!
-- 🔜 **Coming soon** - 🤗 Integration with **Hugging Face Transformers**  
+- 🆕 [18/02/2026] - SINQ is now part of 🤗 **Hugging Face Transformers**. More info [here](https://huggingface.co/docs/transformers/main/quantization/sinq)!
 - 🔜 **Coming soon** - Support for **Conv2D layers** and **timm models** for computer vision tasks  
 - 🔜 **Work in progress** - Support for **mixed-precision quantization** (combine multiple bitwidths for optimal accuracy-efficiency balance)  
 - 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>.
