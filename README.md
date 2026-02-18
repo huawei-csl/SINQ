@@ -117,12 +117,15 @@ With **SINQ**, they become **spread out and less severe**, preserving model accu
 
 ## 3. Quantize any LLM with SINQ
 
+>There are two ways to use SINQ: directly through the Hugging Face Transformers integration, or by cloning this repository and using the full SINQ implementation.
+
+
 <details>
-<summary><strong>Directly run with HF Transformers</strong></summary>
+<summary><strong>Option 1) Directly run with HF Transformers</strong></summary>
 
 <br>
 
-Since SINQ is now integrated into 🤗 Hugging Face Transformers, you can quantize models directly using the native Transformers API without installing SINQ separately (SINQ only, ASINQ is not supported on HF).
+Since SINQ is now integrated into 🤗 Hugging Face Transformers (more info [here](https://huggingface.co/docs/transformers/main/quantization/sinq)), you can quantize models directly using the native Transformers API without installing SINQ separately (SINQ only, ASINQ is not supported on HF).
 
 ```python
 import torch
@@ -158,7 +161,9 @@ pip install transformers
 
 </details>
 
-### Setup & Quick Start from source
+
+
+### Option 2) SINQ via repo cloning
 
 First, clone the repository and install the dependencies:
 
