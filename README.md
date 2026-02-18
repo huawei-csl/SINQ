@@ -501,8 +501,8 @@ We are actively expanding SINQ with new features and integrations. Stay tuned he
 - [02/10/2025] - SINQ paper featured on 🤗 [**Hugging Face Papers**](https://huggingface.co/papers/2509.22944)
 - [17/10/2025] - First pre-quantized **SINQ models** available on 🤗[**Hugging Face Hub**](https://huggingface.co/huawei-csl)! 
 - [23/10/2025] - Faster inference with gemlite backend (4-bit 1D tiling)
-- 🆕 [10/02/2026] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)!
-- 🆕 [18/02/2026] - SINQ is now part of 🤗 **Hugging Face Transformers**. More info [here](https://huggingface.co/docs/transformers/main/quantization/sinq)!
+- [10/02/2026] - First **pre-SINQ GGUF** model available on [here](https://huggingface.co/collections/huawei-csl/presinq-gguf)!
+- [18/02/2026] - SINQ is now part of 🤗 **Hugging Face Transformers**. More info [here](https://huggingface.co/docs/transformers/main/quantization/sinq)!
 - 🔜 **Coming soon** - Support for **Conv2D layers** and **timm models** for computer vision tasks  
 - 🔜 **Work in progress** - Support for **mixed-precision quantization** (combine multiple bitwidths for optimal accuracy-efficiency balance)  
 - 🔜 **Work in progress** - We’re actively working to provide support for popular frameworks such as <code>vLLM</code>, <code>SGLang</code>.
