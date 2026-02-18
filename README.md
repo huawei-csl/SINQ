@@ -153,10 +153,10 @@ qmodel = AutoModelForCausalLM.from_pretrained(
 # Model is ready for inference
 ```
 
-This uses the built-in Transformers integration and requires only:
+This uses the built-in Transformers integration and **it requires**:
 
 ```bash
-pip install transformers #transformers.__version__ >= 5.2.0
+pip install sinq #sinq.__version__ >= 0.1.7.post1
 ```
 
 </details>
