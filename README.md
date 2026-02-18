@@ -156,7 +156,7 @@ qmodel = AutoModelForCausalLM.from_pretrained(
 This uses the built-in Transformers integration and requires only:
 
 ```bash
-pip install transformers
+pip install transformers #transformers.__version__ >= 5.2.0
 ```
 
 </details>
