@@ -23,7 +23,18 @@ def shrink_lp_op(x: Tensor, beta: float, lp_norm: float) -> Tensor:
         out.sub_((1.0 / beta) * out.pow(lp_norm - 1)).clamp_min_(0.0)
         out.mul_(torch.sign(x))
         return out
-
+    
+def kurtosis(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Standard kurtosis: E[(x-mu)^4] / (E[(x-mu)^2])^2
+    Returns a scalar tensor.
+    """
+    x = x.float().reshape(-1)
+    mu = x.mean()
+    xc = x - mu
+    v = (xc * xc).mean().clamp_min(eps)
+    m4 = (xc.pow(4)).mean()
+    return m4 / (v * v)
 
 def dequantize_dual_scale_shift(quantized_matrix, scales, scales2, shifts):
     return ((quantized_matrix - shifts) * scales * scales2)
@@ -57,7 +68,7 @@ def optimize_weights_proximal_legacy(
     min_max: list,
     axis: int = 0,
     device: Union[str, None] = "cpu",
-    opt_params: dict = {"lp_norm": .7, "beta": 1e1, "kappa": 1.01, "iters": 20},
+    opt_params: dict = {"lp_norm": .7, "beta": 1e1, "kappa": 1.01, "iters": 20, "kurtosis_threshold": 5.0},
     verbose: bool = False,
     shape = None,
     tiling_mode = '1D',
@@ -69,7 +80,6 @@ def optimize_weights_proximal_legacy(
         opt_params["kappa"],
         opt_params["iters"],
     )
-
     dtype = float32 if (device == "cpu") else float16  
     W_f   = tensor.to(dtype=dtype, device=device)
     scale = scale.to(dtype=dtype, device=device)
@@ -84,6 +94,16 @@ def optimize_weights_proximal_legacy(
     else: 
         awq_scale = None
 
+    # ---- Kurtosis gate ----
+    kurt_th = opt_params.get("kurtosis_threshold", None)
+    if kurt_th is not None and ("sinq" in str(method).lower()):
+        k0 = float(kurtosis(W_f.view(shape)))
+        if k0 > float(kurt_th):
+            method = "rtn"
+            if verbose:
+                print(f"[SINQ] kurtosis={k0:.2f} > {float(kurt_th):.2f} -> forcing method='{method}'")
+
+    # -----------------------
     assert axis==1, 'only supports axis 1 right now'
     if tiling_mode == '1D':
         q, s1, s2, z= tiled_quant_rectangle(W_f.reshape(shape), min_max, tile, method, awq_scale)
