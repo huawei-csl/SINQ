@@ -2,6 +2,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub stars](https://img.shields.io/github/stars/huawei-csl/SINQ?label=Stars&logo=github&logoColor=white&style=flat-square)](https://github.com/huawei-csl/SINQ/stargazers)
 [![hf-space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Huawei%20CSL-ffc107?color=ffc107&logoColor=white)](https://huggingface.co/huawei-csl)
+[![HF Integration](https://img.shields.io/badge/🤗%20HF_Transformers-SINQ-orange)](https://huggingface.co/docs/transformers/main/quantization/sinq)
+
 
 
 <table border="0" cellspacing="0" cellpadding="0">
