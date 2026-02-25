@@ -22,7 +22,7 @@ def get_qat_dataset(name, tokenizer, model="llama3", seed="random"):
     if use_cache:
         try:
             return torch.load(cache_file), default_data_collator
-        except:
+        except Exception:
             pass
     if name == "wikitext2":
         data, data_collator = get_wikitext2_train(tokenizer=tokenizer)
