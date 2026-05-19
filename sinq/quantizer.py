@@ -243,7 +243,7 @@ class Quantizer:
         compute_dtype = meta.get("compute_dtype", torch.float16)
 
         # 1) Unpack to per-element codes
-        if meta["packing"]:
+        if meta.get("packing"):
             if meta.get("view_as_float", False):
                 W_q = W_q.view(meta["unpack_view_dtype"])
             W_r = cls.unpack[meta["packing"]](W_q, dtype=compute_dtype)
