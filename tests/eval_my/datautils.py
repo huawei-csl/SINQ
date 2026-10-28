@@ -123,7 +123,7 @@ def get_wikitext2_train(tokenizer, seed=0, seqlen=2048):
 
 def get_wikitext2_test4train(tokenizer, seed=0, seqlen=2048):
     dataset = load_dataset(
-        "wikitext",
+        "Salesforce/wikitext",
         "wikitext-2-raw-v1",
         split="test",
     )
@@ -250,7 +250,7 @@ def filter_c4_train(example, tokenizer, source_min_len, source_max_len):
 def get_c4_wiki_train(tokenizer, seed=0, seqlen=2048):
     raw_datasets = load_from_disk('../eval_my/ppl_datasets/allenai/c4/allenai--c4')
     wikitext_dataset_eval = load_dataset(
-        "wikitext",
+        "Salesforce/wikitext",
         "wikitext-2-raw-v1",
         split="test",
         )
@@ -319,7 +319,7 @@ def get_c4_wiki_train(tokenizer, seed=0, seqlen=2048):
 
 def get_wikitext2(tokenizer, seqlen=2048):
     testdata = load_dataset(
-        "wikitext",
+        "Salesforce/wikitext",
         "wikitext-2-raw-v1",
         split="test",
     )
